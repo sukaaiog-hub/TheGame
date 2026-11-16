@@ -65,9 +65,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Missing required race result fields' }, { status: 400 });
     }
 
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const safeRoomId = body.roomId && uuidRegex.test(body.roomId) ? body.roomId : null;
+
     const { error } = await supabase.from('race_results').upsert(
       {
-        room_id: body.roomId ?? null,
+        room_id: safeRoomId,
         track_id: body.trackId,
         player_id: body.playerId.slice(0, 64),
         nickname: body.nickname.slice(0, 20),

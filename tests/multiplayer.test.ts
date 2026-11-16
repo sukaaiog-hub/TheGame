@@ -85,6 +85,20 @@ describe('Multiplayer Roster & AI Fill (3-4 Players)', () => {
     expect(roster.length).toBe(3);
     expect(roster.every((r) => !r.isAi)).toBe(true);
   });
+
+  it('supports single-player solo time trial (1 kart) and solo vs 3 AI bots (4 karts)', () => {
+    const timeTrialRoom = makeRoom({ id: 'solo', code: 'SOLO', max_players: 1, ai_fill: false });
+    const ttRoster = buildRaceRoster(timeTrialRoom, [makePlayer(0, 'p1', 'tux')], 'p1', track);
+    expect(ttRoster.length).toBe(1);
+    expect(ttRoster[0].isLocal).toBe(true);
+    expect(ttRoster[0].isAi).toBe(false);
+
+    const soloVsAiRoom = makeRoom({ id: 'solo', code: 'SOLO', max_players: 4, ai_fill: true });
+    const vsAiRoster = buildRaceRoster(soloVsAiRoom, [makePlayer(0, 'p1', 'sara')], 'p1', track);
+    expect(vsAiRoster.length).toBe(4);
+    expect(vsAiRoster.filter((r) => r.isLocal).length).toBe(1);
+    expect(vsAiRoster.filter((r) => r.isAi).length).toBe(3);
+  });
 });
 
 describe('Network Packet Sync, Sequencing & Extrapolation', () => {

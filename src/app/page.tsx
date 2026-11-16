@@ -28,6 +28,12 @@ export default function HomePage() {
   const [players, setPlayers] = useState<LobbyPlayer[]>([]);
   const [onlinePresenceIds, setOnlinePresenceIds] = useState<string[]>([]);
   const [startAtEpochMs, setStartAtEpochMs] = useState<number>(0);
+  const [soloRun, setSoloRun] = useState<{
+    runId: number;
+    room: LobbyRoom;
+    players: LobbyPlayer[];
+    startAtEpochMs: number;
+  } | null>(null);
   const [busy, setBusy] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -140,6 +146,69 @@ export default function HomePage() {
   const handleKartChange = (next: KartId) => {
     setKartId(next);
     if (playerId) savePlayerIdentity({ playerId, nickname, kartId: next });
+  };
+
+  const handlePlaySingle = (opts: { trackId: TrackId; laps: number; aiCount: number }) => {
+    setErrorMsg(null);
+    const nowIso = new Date().toISOString();
+    const startAt = Date.now() + 3400;
+    const totalRacers = Math.max(1, Math.min(4, 1 + opts.aiCount));
+
+    const soloRoom: LobbyRoom = {
+      id: 'solo',
+      code: 'SOLO',
+      name: 'Single Player Race',
+      host_id: playerId,
+      track_id: opts.trackId,
+      laps: opts.laps,
+      max_players: totalRacers,
+      ai_fill: opts.aiCount > 0,
+      status: 'countdown',
+      created_at: nowIso,
+      updated_at: nowIso,
+      started_at: new Date(startAt).toISOString(),
+      finished_at: null,
+    };
+
+    const soloPlayer: LobbyPlayer = {
+      id: 'solo-human',
+      room_id: 'solo',
+      player_id: playerId,
+      nickname: nickname.trim() || 'TuxRacer',
+      kart_id: kartId,
+      seat_index: 0,
+      is_host: true,
+      is_ready: true,
+      joined_at: nowIso,
+      last_seen_at: nowIso,
+    };
+
+    setSoloRun({
+      runId: Date.now(),
+      room: soloRoom,
+      players: [soloPlayer],
+      startAtEpochMs: startAt,
+    });
+  };
+
+  const handleSoloRematch = async () => {
+    setSoloRun((prev) => {
+      if (!prev) return null;
+      const nextStart = Date.now() + 3400;
+      return {
+        ...prev,
+        runId: Date.now(),
+        startAtEpochMs: nextStart,
+        room: {
+          ...prev.room,
+          started_at: new Date(nextStart).toISOString(),
+        },
+      };
+    });
+  };
+
+  const handleLeaveSolo = async () => {
+    setSoloRun(null);
   };
 
   const handleCreateRoom = async (opts: {
@@ -316,6 +385,23 @@ export default function HomePage() {
     }
   };
 
+  if (soloRun) {
+    return (
+      <RaceView
+        key={soloRun.runId}
+        room={soloRun.room}
+        players={soloRun.players}
+        localPlayerId={playerId}
+        startAtEpochMs={soloRun.startAtEpochMs}
+        isSolo
+        channelRef={channelRef}
+        incomingBroadcastRef={incomingBroadcastRef}
+        onRematch={handleSoloRematch}
+        onLeaveRoom={handleLeaveSolo}
+      />
+    );
+  }
+
   if (!room) {
     return (
       <LobbyScreen
@@ -323,6 +409,7 @@ export default function HomePage() {
         kartId={kartId}
         onChangeNickname={handleNicknameChange}
         onChangeKart={handleKartChange}
+        onPlaySingle={handlePlaySingle}
         onCreateRoom={handleCreateRoom}
         onJoinRoom={handleJoinRoom}
         busy={busy}

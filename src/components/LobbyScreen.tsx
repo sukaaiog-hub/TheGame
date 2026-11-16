@@ -43,6 +43,11 @@ interface LobbyScreenProps {
   kartId: KartId;
   onChangeNickname: (nick: string) => void;
   onChangeKart: (kart: KartId) => void;
+  onPlaySingle: (opts: {
+    trackId: TrackId;
+    laps: number;
+    aiCount: number;
+  }) => void;
   onCreateRoom: (opts: {
     name: string;
     trackId: TrackId;
@@ -61,12 +66,17 @@ export default function LobbyScreen({
   kartId,
   onChangeNickname,
   onChangeKart,
+  onPlaySingle,
   onCreateRoom,
   onJoinRoom,
   busy,
   errorMsg,
   initialJoinCode = '',
 }: LobbyScreenProps) {
+  const [singleTrackId, setSingleTrackId] = useState<TrackId>('lighthouse_bay');
+  const [singleLaps, setSingleLaps] = useState(3);
+  const [singleAiCount, setSingleAiCount] = useState(3);
+
   const [roomName, setRoomName] = useState('Sunday Grand Prix');
   const [trackId, setTrackId] = useState<TrackId>('lighthouse_bay');
   const [laps, setLaps] = useState(3);
@@ -216,6 +226,91 @@ export default function LobbyScreen({
                 </button>
               );
             })}
+          </div>
+        </section>
+
+        {/* Single Player Quick Play */}
+        <section className="mb-6 rounded-2xl border border-amber-400/30 bg-gradient-to-r from-amber-500/10 via-slate-900/80 to-cyan-500/10 p-5 shadow-xl">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-amber-300">
+                <Zap className="h-4 w-4" />
+                Instant Solo Arcade Mode
+              </div>
+              <h2 className="mt-1 text-xl font-black text-white">
+                Play Single Player
+              </h2>
+              <p className="mt-0.5 text-xs text-slate-300">
+                Jump straight onto the track solo or race up to 3 AI bots immediately—no lobby wait required.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-4 lg:w-auto">
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Circuit
+                </label>
+                <select
+                  value={singleTrackId}
+                  onChange={(e) => setSingleTrackId(e.target.value as TrackId)}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white outline-none focus:border-amber-400"
+                >
+                  {TRACK_LIST.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Opponents
+                </label>
+                <select
+                  value={singleAiCount}
+                  onChange={(e) => setSingleAiCount(Number(e.target.value))}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white outline-none focus:border-amber-400"
+                >
+                  <option value={3}>3 AI Bots (4 Karts)</option>
+                  <option value={2}>2 AI Bots (3 Karts)</option>
+                  <option value={1}>1 AI Rival (1v1)</option>
+                  <option value={0}>Solo Time Trial</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="mb-1 block text-[11px] font-semibold uppercase tracking-wider text-slate-400">
+                  Laps
+                </label>
+                <select
+                  value={singleLaps}
+                  onChange={(e) => setSingleLaps(Number(e.target.value))}
+                  className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2.5 text-sm font-semibold text-white outline-none focus:border-amber-400"
+                >
+                  <option value={1}>1 Lap</option>
+                  <option value={2}>2 Laps</option>
+                  <option value={3}>3 Laps</option>
+                  <option value={5}>5 Laps</option>
+                </select>
+              </div>
+
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() =>
+                  onPlaySingle({
+                    trackId: singleTrackId,
+                    laps: singleLaps,
+                    aiCount: singleAiCount,
+                  })
+                }
+                className="flex items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-amber-400 to-orange-500 px-5 py-2.5 text-sm font-black uppercase tracking-wider text-slate-950 shadow-lg transition hover:brightness-110 disabled:opacity-50"
+              >
+                <Flag className="h-4 w-4" />
+                Play Solo
+              </button>
+            </div>
           </div>
         </section>
 

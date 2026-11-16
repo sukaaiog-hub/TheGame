@@ -78,6 +78,7 @@ interface RaceViewProps {
   players: LobbyPlayer[];
   localPlayerId: string;
   startAtEpochMs: number;
+  isSolo?: boolean;
   channelRef: React.MutableRefObject<MultiplayerRoomChannel | null>;
   incomingBroadcastRef: React.MutableRefObject<((msg: MultiplayerBroadcast) => void) | null>;
   onRematch: () => Promise<void>;
@@ -91,6 +92,7 @@ export default function RaceView({
   players,
   localPlayerId,
   startAtEpochMs,
+  isSolo = false,
   channelRef,
   incomingBroadcastRef,
   onRematch,
@@ -221,7 +223,7 @@ export default function RaceView({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            roomId: room.id,
+            roomId: isSolo ? null : room.id,
             trackId: room.track_id,
             playerId: local.id,
             nickname: local.nickname,
@@ -537,7 +539,7 @@ export default function RaceView({
       sound.dispose();
       renderer.dispose();
     };
-  }, [room, players, localPlayerId, startAtEpochMs, track, isHost, channelRef, incomingBroadcastRef]);
+  }, [room, players, localPlayerId, startAtEpochMs, isSolo, track, isHost, channelRef, incomingBroadcastRef]);
 
   const toggleMute = () => {
     const next = !muted;
@@ -923,7 +925,11 @@ export default function RaceView({
                   className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-cyan-500 to-emerald-500 px-5 py-3 text-sm font-black uppercase tracking-wider text-slate-950 hover:brightness-110 disabled:opacity-50"
                 >
                   <Sparkles className="h-4 w-4" />
-                  {rematchBusy ? 'Returning...' : 'Rematch (Back to Lobby)'}
+                  {rematchBusy
+                    ? 'Starting...'
+                    : isSolo
+                      ? 'Race Again'
+                      : 'Rematch (Back to Lobby)'}
                 </button>
               ) : (
                 <div className="flex flex-1 items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950/80 px-4 py-3 text-xs font-semibold text-slate-300">
@@ -937,7 +943,7 @@ export default function RaceView({
                 onClick={() => void onLeaveRoom()}
                 className="rounded-xl border border-slate-700 bg-slate-800 px-4 py-3 text-sm font-bold text-slate-200 hover:bg-slate-700"
               >
-                Leave Room
+                {isSolo ? 'Main Menu' : 'Leave Room'}
               </button>
             </div>
           </div>
