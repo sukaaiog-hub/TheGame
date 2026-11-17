@@ -1,799 +1,853 @@
-import * as THREE from 'three';
-import { getKartDefinition } from './karts';
-import { BuiltTrack } from './tracks';
-import type { ItemBoxState, KartId, ProjectileState, RacerState } from './types';
+import { getActiveWeapon } from './combat';
+import { getOperatorDefinition } from './operators';
+import { getBiomeTextureAtlas } from './textures';
+import { RARITY_META, WEAPONS } from './weapons';
+import { pointInRect } from './world';
+import type {
+  BuiltWorld,
+  BulletEntity,
+  DamageFloat,
+  FighterState,
+  GrenadeEntity,
+  LootDrop,
+  ParticleFx,
+  ScorchDecal,
+  ShellCasing,
+  StormState,
+  WeaponId,
+} from './types';
 
-interface KartVisual {
-  root: THREE.Group;
-  bodyGroup: THREE.Group;
-  frontWheels: THREE.Mesh[];
-  rearWheels: THREE.Mesh[];
-  flameLeft: THREE.Mesh;
-  flameRight: THREE.Mesh;
-  driftGlow: THREE.Mesh;
-  shieldMesh: THREE.Mesh;
-  nameSprite: THREE.Sprite;
-  lastTagText: string;
+export interface ArenaRenderFrameState {
+  world: BuiltWorld;
+  fighters: FighterState[];
+  localFighterId: string;
+  bullets: BulletEntity[];
+  grenades: GrenadeEntity[];
+  drops: LootDrop[];
+  storm: StormState;
+  particles: ParticleFx[];
+  casings: ShellCasing[];
+  floats: DamageFloat[];
+  scorches: ScorchDecal[];
+  mouseScreenX: number;
+  mouseScreenY: number;
+  hitmarkerUntilMs: number;
+  nowMs: number;
 }
 
-export class KartSceneRenderer {
-  private container: HTMLElement;
-  private renderer: THREE.WebGLRenderer;
-  private scene: THREE.Scene;
-  private camera: THREE.PerspectiveCamera;
-  private track: BuiltTrack;
-  private kartVisuals = new Map<string, KartVisual>();
-  private itemBoxMeshes = new Map<string, THREE.Group>();
-  private projectileMeshes = new Map<string, THREE.Group>();
-  private cameraWide = false;
-  private camPos = new THREE.Vector3(0, 8, -14);
-  private camLook = new THREE.Vector3(0, 1, 10);
-  private resizeObserver: ResizeObserver | null = null;
+export class TopDownArenaRenderer {
+  private canvas: HTMLCanvasElement;
+  private ctx: CanvasRenderingContext2D;
+  private camX = 1400;
+  private camY = 1400;
+  private camInitialized = false;
+  private shakeIntensity = 0;
+  private width = 1280;
+  private height = 720;
+  private roofAlphas = new Map<string, number>();
 
-  constructor(container: HTMLElement, track: BuiltTrack) {
-    this.container = container;
-    this.track = track;
-
-    this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(track.def.skyTopColor);
-    this.scene.fog = new THREE.FogExp2(track.def.fogColor, 0.0021);
-
-    const width = Math.max(1, container.clientWidth);
-    const height = Math.max(1, container.clientHeight);
-    this.camera = new THREE.PerspectiveCamera(65, width / height, 0.5, 950);
-
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    this.renderer.setSize(width, height);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-
+  constructor(container: HTMLElement) {
+    this.canvas = document.createElement('canvas');
+    this.canvas.style.width = '100%';
+    this.canvas.style.height = '100%';
+    this.canvas.style.display = 'block';
+    this.canvas.style.cursor = 'crosshair';
     container.innerHTML = '';
-    container.appendChild(this.renderer.domElement);
-
-    this.setupLighting();
-    this.buildEnvironment();
-    this.buildTrackMeshes();
-    this.buildBoostPads();
-    this.buildInitialItemBoxes();
-
-    this.resizeObserver = new ResizeObserver(() => this.handleResize());
-    this.resizeObserver.observe(container);
+    container.appendChild(this.canvas);
+    this.ctx = this.canvas.getContext('2d')!;
+    this.resize(container);
   }
 
-  public toggleCameraMode(): boolean {
-    this.cameraWide = !this.cameraWide;
-    return this.cameraWide;
+  public resize(container: HTMLElement): void {
+    const rect = container.getBoundingClientRect();
+    const w = Math.max(320, Math.floor(rect.width || window.innerWidth));
+    const h = Math.max(240, Math.floor(rect.height || window.innerHeight));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    this.width = w;
+    this.height = h;
+    this.canvas.width = Math.floor(w * dpr);
+    this.canvas.height = Math.floor(h * dpr);
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
-  private handleResize(): void {
-    const width = Math.max(1, this.container.clientWidth);
-    const height = Math.max(1, this.container.clientHeight);
-    this.camera.aspect = width / height;
-    this.camera.updateProjectionMatrix();
-    this.renderer.setSize(width, height);
+  public addShake(amount: number): void {
+    this.shakeIntensity = Math.min(20, this.shakeIntensity + amount);
   }
 
-  private setupLighting(): void {
-    const hemi = new THREE.HemisphereLight('#e0f2fe', this.track.def.groundColor, 0.95);
-    this.scene.add(hemi);
-
-    const sun = new THREE.DirectionalLight('#fffbeb', 1.45);
-    sun.position.set(140, 220, 90);
-    sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
-    sun.shadow.camera.near = 20;
-    sun.shadow.camera.far = 650;
-    const d = 280;
-    sun.shadow.camera.left = -d;
-    sun.shadow.camera.right = d;
-    sun.shadow.camera.top = d;
-    sun.shadow.camera.bottom = -d;
-    this.scene.add(sun);
+  public screenToWorld(sx: number, sy: number): { x: number; y: number } {
+    return {
+      x: this.camX - this.width / 2 + sx,
+      y: this.camY - this.height / 2 + sy,
+    };
   }
 
-  private buildEnvironment(): void {
-    // Large terrain ground plane
-    const groundGeo = new THREE.PlaneGeometry(1400, 1400);
-    const groundMat = new THREE.MeshLambertMaterial({ color: this.track.def.groundColor });
-    const ground = new THREE.Mesh(groundGeo, groundMat);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.y = -1.2;
-    ground.receiveShadow = true;
-    this.scene.add(ground);
+  public render(state: ArenaRenderFrameState, dt: number): void {
+    const ctx = this.ctx;
+    const { world, fighters, localFighterId, nowMs } = state;
+    const atlas = getBiomeTextureAtlas(ctx, world.def.id);
+    const local = fighters.find((f) => f.id === localFighterId) ?? fighters.find((f) => f.alive) ?? fighters[0];
 
-    // Theme-specific outer horizon / hazard plane
-    if (this.track.def.id === 'lighthouse_bay') {
-      const seaGeo = new THREE.RingGeometry(245, 760, 48);
-      const seaMat = new THREE.MeshBasicMaterial({ color: '#0284c7', side: THREE.DoubleSide });
-      const sea = new THREE.Mesh(seaGeo, seaMat);
-      sea.rotation.x = -Math.PI / 2;
-      sea.position.set(105, -0.7, 10);
-      this.scene.add(sea);
-
-      // Iconic Lighthouse landmark
-      const tower = new THREE.Group();
-      const base = new THREE.Mesh(
-        new THREE.CylinderGeometry(7, 10, 46, 16),
-        new THREE.MeshLambertMaterial({ color: '#f8fafc' })
-      );
-      base.position.y = 23;
-      const stripe = new THREE.Mesh(
-        new THREE.CylinderGeometry(8.2, 8.9, 12, 16),
-        new THREE.MeshLambertMaterial({ color: '#ef4444' })
-      );
-      stripe.position.y = 22;
-      const beacon = new THREE.Mesh(
-        new THREE.SphereGeometry(5.5, 14, 14),
-        new THREE.MeshBasicMaterial({ color: '#fde047' })
-      );
-      beacon.position.y = 48;
-      tower.add(base, stripe, beacon);
-      tower.position.set(108, 0, 15);
-      this.scene.add(tower);
-    } else if (this.track.def.id === 'magma_caldera') {
-      const lavaGeo = new THREE.PlaneGeometry(1200, 1200);
-      const lavaMat = new THREE.MeshBasicMaterial({ color: '#ea580c' });
-      const lava = new THREE.Mesh(lavaGeo, lavaMat);
-      lava.rotation.x = -Math.PI / 2;
-      lava.position.y = -2.2;
-      this.scene.add(lava);
-    }
-
-    // Scenic props placed safely outside the track boundary
-    const propCount = 46;
-    const minDistFromTrack = this.track.wallHalfWidth + 10;
-    for (let i = 0; i < propCount; i++) {
-      const angle = (i / propCount) * Math.PI * 2;
-      const radius = 110 + (i % 5) * 48;
-      const centerX = this.track.def.id === 'frozen_tundra' ? -80 : 95;
-      const px = centerX + Math.cos(angle) * radius;
-      const pz = Math.sin(angle) * radius;
-
-      // Ensure prop is well clear of all road samples
-      let tooClose = false;
-      for (let s = 0; s < this.track.samples.length; s += 3) {
-        const sp = this.track.samples[s];
-        const dx = px - sp.x;
-        const dz = pz - sp.z;
-        if (dx * dx + dz * dz < minDistFromTrack * minDistFromTrack) {
-          tooClose = true;
-          break;
-        }
-      }
-      if (tooClose) continue;
-
-      const prop = this.createSceneryProp(i);
-      prop.position.set(px, -1.0, pz);
-      this.scene.add(prop);
-    }
-  }
-
-  private createSceneryProp(seed: number): THREE.Group {
-    const group = new THREE.Group();
-    const scale = 0.85 + (seed % 4) * 0.25;
-    group.scale.setScalar(scale);
-
-    if (this.track.def.id === 'lighthouse_bay') {
-      // Palm tree
-      const trunk = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.65, 1.0, 11, 8),
-        new THREE.MeshLambertMaterial({ color: '#92400e' })
-      );
-      trunk.position.y = 5.5;
-      group.add(trunk);
-      const leafMat = new THREE.MeshLambertMaterial({ color: '#16a34a' });
-      for (let k = 0; k < 5; k++) {
-        const frond = new THREE.Mesh(new THREE.ConeGeometry(2.2, 6.5, 5), leafMat);
-        frond.position.y = 11;
-        frond.rotation.z = Math.PI * 0.36;
-        frond.rotation.y = (k / 5) * Math.PI * 2;
-        group.add(frond);
-      }
-    } else if (this.track.def.id === 'frozen_tundra') {
-      // Snow-topped pine or ice crystal
-      if (seed % 3 === 0) {
-        const crystal = new THREE.Mesh(
-          new THREE.ConeGeometry(3.2, 13, 6),
-          new THREE.MeshLambertMaterial({ color: '#38bdf8', emissive: '#0c4a6e' })
-        );
-        crystal.position.y = 6.5;
-        group.add(crystal);
+    // Smooth camera follow + slight look-ahead toward mouse aim
+    if (local) {
+      const lookOffsetX = Math.max(-110, Math.min(110, (state.mouseScreenX - this.width / 2) * 0.16));
+      const lookOffsetY = Math.max(-80, Math.min(80, (state.mouseScreenY - this.height / 2) * 0.16));
+      const targetX = local.x + (local.alive ? lookOffsetX : 0);
+      const targetY = local.y + (local.alive ? lookOffsetY : 0);
+      if (!this.camInitialized) {
+        this.camX = targetX;
+        this.camY = targetY;
+        this.camInitialized = true;
       } else {
-        const trunk = new THREE.Mesh(
-          new THREE.CylinderGeometry(0.7, 1.0, 5, 6),
-          new THREE.MeshLambertMaterial({ color: '#78350f' })
-        );
-        trunk.position.y = 2.5;
-        const pine1 = new THREE.Mesh(
-          new THREE.ConeGeometry(4.2, 8, 7),
-          new THREE.MeshLambertMaterial({ color: '#0f766e' })
-        );
-        pine1.position.y = 7.5;
-        const snowCap = new THREE.Mesh(
-          new THREE.ConeGeometry(2.8, 5, 7),
-          new THREE.MeshLambertMaterial({ color: '#f8fafc' })
-        );
-        snowCap.position.y = 11.5;
-        group.add(trunk, pine1, snowCap);
+        const a = Math.min(1, dt * 9.5);
+        this.camX += (targetX - this.camX) * a;
+        this.camY += (targetY - this.camY) * a;
       }
+    }
+
+    this.shakeIntensity = Math.max(0, this.shakeIntensity - dt * 36);
+    const shakeX = this.shakeIntensity > 0.2 ? (Math.random() - 0.5) * this.shakeIntensity : 0;
+    const shakeY = this.shakeIntensity > 0.2 ? (Math.random() - 0.5) * this.shakeIntensity : 0;
+
+    const viewLeft = this.camX - this.width / 2 + shakeX;
+    const viewTop = this.camY - this.height / 2 + shakeY;
+
+    ctx.clearRect(0, 0, this.width, this.height);
+    ctx.save();
+    ctx.translate(-viewLeft, -viewTop);
+
+    // 1. Ocean / Island outer boundary texture
+    if (atlas.waterPattern) {
+      ctx.fillStyle = atlas.waterPattern;
     } else {
-      // Obsidian spire with ember top
-      const spire = new THREE.Mesh(
-        new THREE.ConeGeometry(4.2, 16, 6),
-        new THREE.MeshLambertMaterial({ color: '#1c1917' })
-      );
-      spire.position.y = 8;
-      const ember = new THREE.Mesh(
-        new THREE.OctahedronGeometry(1.8),
-        new THREE.MeshBasicMaterial({ color: '#f97316' })
-      );
-      ember.position.y = 16.8;
-      group.add(spire, ember);
+      ctx.fillStyle = world.def.waterColor;
+    }
+    ctx.fillRect(viewLeft - 50, viewTop - 50, this.width + 100, this.height + 100);
+
+    // Sandy coastal rim around island
+    const m = world.def.playMargin;
+    const sz = world.def.worldSize;
+    ctx.fillStyle = world.def.sandColor;
+    ctx.fillRect(m - 42, m - 42, sz - (m - 42) * 2, sz - (m - 42) * 2);
+
+    // 2. Main textured biome ground
+    if (atlas.groundPattern) {
+      ctx.fillStyle = atlas.groundPattern;
+    } else {
+      ctx.fillStyle = world.def.groundColor;
+    }
+    ctx.fillRect(m, m, sz - m * 2, sz - m * 2);
+
+    // 3. Textured crossroads + highway lane lines
+    for (const road of world.roads) {
+      ctx.fillStyle = atlas.roadPattern ?? world.def.roadColor;
+      ctx.fillRect(road.x, road.y, road.w, road.h);
+      ctx.strokeStyle = 'rgba(255,255,255,0.12)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(road.x, road.y, road.w, road.h);
+
+      ctx.save();
+      ctx.strokeStyle = 'rgba(250, 204, 21, 0.52)';
+      ctx.lineWidth = 4;
+      ctx.setLineDash([28, 22]);
+      ctx.beginPath();
+      if (road.orientation === 'h') {
+        ctx.moveTo(road.x + 20, road.y + road.h / 2);
+        ctx.lineTo(road.x + road.w - 20, road.y + road.h / 2);
+      } else {
+        ctx.moveTo(road.x + road.w / 2, road.y + 20);
+        ctx.lineTo(road.x + road.w / 2, road.y + road.h - 20);
+      }
+      ctx.stroke();
+      ctx.restore();
     }
 
-    return group;
-  }
-
-  private buildTrackMeshes(): void {
-    const samples = this.track.samples;
-    const n = samples.length;
-    const halfRoad = this.track.roadWidth * 0.5;
-    const curbOuter = halfRoad + 1.8;
-    const wallOffset = this.track.wallHalfWidth + 0.8;
-
-    const roadPositions: number[] = [];
-    const roadColors: number[] = [];
-    const curbPositions: number[] = [];
-    const curbColors: number[] = [];
-    const railLeftPositions: number[] = [];
-    const railRightPositions: number[] = [];
-
-    const roadBase = new THREE.Color(this.track.def.roadColor);
-    const roadStripe = new THREE.Color('#475569').lerp(new THREE.Color('#ffffff'), 0.25);
-    const curbA = new THREE.Color(this.track.def.curbColorA);
-    const curbB = new THREE.Color(this.track.def.curbColorB);
-
-    const pushTri = (arr: number[], a: [number, number, number], b: [number, number, number], c: [number, number, number]) => {
-      arr.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]);
-    };
-    const pushColorTri = (arr: number[], col: THREE.Color) => {
-      arr.push(col.r, col.g, col.b, col.r, col.g, col.b, col.r, col.g, col.b);
-    };
-
-    for (let i = 0; i < n; i++) {
-      const s0 = samples[i];
-      const s1 = samples[(i + 1) % n];
-
-      const l0: [number, number, number] = [s0.x - s0.nx * halfRoad, s0.y + 0.03, s0.z - s0.nz * halfRoad];
-      const r0: [number, number, number] = [s0.x + s0.nx * halfRoad, s0.y + 0.03, s0.z + s0.nz * halfRoad];
-      const l1: [number, number, number] = [s1.x - s1.nx * halfRoad, s1.y + 0.03, s1.z - s1.nz * halfRoad];
-      const r1: [number, number, number] = [s1.x + s1.nx * halfRoad, s1.y + 0.03, s1.z + s1.nz * halfRoad];
-
-      pushTri(roadPositions, l0, r0, r1);
-      pushTri(roadPositions, l0, r1, l1);
-      const rc = i % 4 === 0 ? roadStripe : roadBase;
-      pushColorTri(roadColors, rc);
-      pushColorTri(roadColors, rc);
-
-      // Left & right alternating curbs
-      const clOut0: [number, number, number] = [s0.x - s0.nx * curbOuter, s0.y + 0.02, s0.z - s0.nz * curbOuter];
-      const clOut1: [number, number, number] = [s1.x - s1.nx * curbOuter, s1.y + 0.02, s1.z - s1.nz * curbOuter];
-      const crOut0: [number, number, number] = [s0.x + s0.nx * curbOuter, s0.y + 0.02, s0.z + s0.nz * curbOuter];
-      const crOut1: [number, number, number] = [s1.x + s1.nx * curbOuter, s1.y + 0.02, s1.z + s1.nz * curbOuter];
-
-      const cc = Math.floor(i / 2) % 2 === 0 ? curbA : curbB;
-      pushTri(curbPositions, clOut0, l0, l1);
-      pushTri(curbPositions, clOut0, l1, clOut1);
-      pushColorTri(curbColors, cc);
-      pushColorTri(curbColors, cc);
-
-      pushTri(curbPositions, r0, crOut0, crOut1);
-      pushTri(curbPositions, r0, crOut1, r1);
-      pushColorTri(curbColors, cc);
-      pushColorTri(curbColors, cc);
-
-      // Guardrails
-      const wl0b: [number, number, number] = [s0.x - s0.nx * wallOffset, s0.y, s0.z - s0.nz * wallOffset];
-      const wl0t: [number, number, number] = [s0.x - s0.nx * wallOffset, s0.y + 1.5, s0.z - s0.nz * wallOffset];
-      const wl1b: [number, number, number] = [s1.x - s1.nx * wallOffset, s1.y, s1.z - s1.nz * wallOffset];
-      const wl1t: [number, number, number] = [s1.x - s1.nx * wallOffset, s1.y + 1.5, s1.z - s1.nz * wallOffset];
-      pushTri(railLeftPositions, wl0b, wl0t, wl1t);
-      pushTri(railLeftPositions, wl0b, wl1t, wl1b);
-
-      const wr0b: [number, number, number] = [s0.x + s0.nx * wallOffset, s0.y, s0.z + s0.nz * wallOffset];
-      const wr0t: [number, number, number] = [s0.x + s0.nx * wallOffset, s0.y + 1.5, s0.z + s0.nz * wallOffset];
-      const wr1b: [number, number, number] = [s1.x + s1.nx * wallOffset, s1.y, s1.z + s1.nz * wallOffset];
-      const wr1t: [number, number, number] = [s1.x + s1.nx * wallOffset, s1.y + 1.5, s1.z + s1.nz * wallOffset];
-      pushTri(railRightPositions, wr0b, wr1t, wr0t);
-      pushTri(railRightPositions, wr0b, wr1b, wr1t);
+    // 4. Grenade blast scorch decals & shell casings on ground
+    for (const sc of state.scorches) {
+      const age = (nowMs - sc.bornAtMs) / 15000;
+      if (age >= 1) continue;
+      ctx.fillStyle = `rgba(15, 15, 15, ${(1 - age) * 0.45})`;
+      ctx.beginPath();
+      ctx.arc(sc.x, sc.y, sc.radius, 0, Math.PI * 2);
+      ctx.fill();
     }
 
-    const roadGeo = new THREE.BufferGeometry();
-    roadGeo.setAttribute('position', new THREE.Float32BufferAttribute(roadPositions, 3));
-    roadGeo.setAttribute('color', new THREE.Float32BufferAttribute(roadColors, 3));
-    roadGeo.computeVertexNormals();
-    const roadMesh = new THREE.Mesh(
-      roadGeo,
-      new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })
-    );
-    roadMesh.receiveShadow = true;
-    this.scene.add(roadMesh);
+    for (const c of state.casings) {
+      const age = (nowMs - c.bornAtMs) / 6000;
+      if (age >= 1) continue;
+      ctx.save();
+      ctx.translate(c.x, c.y);
+      ctx.rotate(c.angle);
+      ctx.globalAlpha = 1 - age * 0.8;
+      ctx.fillStyle = c.color;
+      ctx.fillRect(-3, -1.3, 6, 2.6);
+      ctx.restore();
+    }
 
-    const curbGeo = new THREE.BufferGeometry();
-    curbGeo.setAttribute('position', new THREE.Float32BufferAttribute(curbPositions, 3));
-    curbGeo.setAttribute('color', new THREE.Float32BufferAttribute(curbColors, 3));
-    curbGeo.computeVertexNormals();
-    const curbMesh = new THREE.Mesh(
-      curbGeo,
-      new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide })
-    );
-    curbMesh.receiveShadow = true;
-    this.scene.add(curbMesh);
+    // 5. Building interior floors
+    for (const b of world.buildings) {
+      if (!this.rectVisible(b.x, b.y, b.w, b.h, viewLeft, viewTop)) continue;
+      ctx.fillStyle = 'rgba(0,0,0,0.32)';
+      ctx.fillRect(b.x + 10, b.y + 12, b.w, b.h);
+      ctx.fillStyle = atlas.floors[b.floorKind] ?? '#574636';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
 
-    const railMat = new THREE.MeshLambertMaterial({
-      color: this.track.def.accentColor,
-      side: THREE.DoubleSide,
-    });
-    const railLGeo = new THREE.BufferGeometry();
-    railLGeo.setAttribute('position', new THREE.Float32BufferAttribute(railLeftPositions, 3));
-    railLGeo.computeVertexNormals();
-    this.scene.add(new THREE.Mesh(railLGeo, railMat));
+    // 6. Ground Loot Drops with glowing rarity rings
+    const pulse = 0.5 + 0.5 * Math.sin(nowMs * 0.006);
+    for (const drop of state.drops) {
+      if (!this.circleVisible(drop.x, drop.y, 40, viewLeft, viewTop)) continue;
+      const meta = RARITY_META[drop.rarity];
+      const bob = Math.sin(nowMs * 0.005 + drop.x) * 2.5;
 
-    const railRGeo = new THREE.BufferGeometry();
-    railRGeo.setAttribute('position', new THREE.Float32BufferAttribute(railRightPositions, 3));
-    railRGeo.computeVertexNormals();
-    this.scene.add(new THREE.Mesh(railRGeo, railMat));
+      // Rarity halo
+      ctx.save();
+      const grad = ctx.createRadialGradient(drop.x, drop.y, 2, drop.x, drop.y, 22 + pulse * 4);
+      grad.addColorStop(0, meta.glow);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(drop.x, drop.y, 26, 0, Math.PI * 2);
+      ctx.fill();
 
-    // Checkered Start/Finish Gantry Arch at sample 0
-    const start = samples[0];
-    const gantry = new THREE.Group();
-    const postMat = new THREE.MeshLambertMaterial({ color: '#f8fafc' });
-    const leftPost = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 9, 10), postMat);
-    leftPost.position.set(-halfRoad - 0.5, 4.5, 0);
-    const rightPost = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.7, 9, 10), postMat);
-    rightPost.position.set(halfRoad + 0.5, 4.5, 0);
+      ctx.translate(drop.x, drop.y + bob);
+      ctx.fillStyle = '#0f172a';
+      ctx.strokeStyle = meta.color;
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.roundRect(-14, -14, 28, 28, 7);
+      ctx.fill();
+      ctx.stroke();
 
-    const banner = new THREE.Mesh(
-      new THREE.BoxGeometry(this.track.roadWidth + 2, 2.2, 1.2),
-      new THREE.MeshBasicMaterial({ map: this.createCheckerTexture() })
-    );
-    banner.position.set(0, 8.2, 0);
+      // Icon per loot type
+      ctx.fillStyle = meta.color;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.font = 'bold 10px Inter, sans-serif';
+      if (drop.kind === 'weapon' && drop.weaponId) {
+        this.drawWeaponSilhouette(ctx, drop.weaponId, 0, 0, -0.35, 0.72, meta.color);
+      } else if (drop.kind === 'medkit') {
+        ctx.fillStyle = '#ef4444';
+        ctx.fillRect(-3, -8, 6, 16);
+        ctx.fillRect(-8, -3, 16, 6);
+      } else if (drop.kind === 'armor') {
+        ctx.fillStyle = '#38bdf8';
+        ctx.beginPath();
+        ctx.moveTo(0, -9);
+        ctx.lineTo(8, -5);
+        ctx.lineTo(6, 7);
+        ctx.lineTo(0, 10);
+        ctx.lineTo(-6, 7);
+        ctx.lineTo(-8, -5);
+        ctx.closePath();
+        ctx.fill();
+      } else if (drop.kind === 'grenade') {
+        ctx.fillStyle = '#f97316';
+        ctx.beginPath();
+        ctx.arc(0, 2, 6, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = '#cbd5e1';
+        ctx.fillRect(-3, -7, 6, 4);
+      } else {
+        ctx.fillStyle = '#facc15';
+        ctx.fillRect(-6, -4, 3, 9);
+        ctx.fillRect(-1.5, -6, 3, 11);
+        ctx.fillRect(3, -4, 3, 9);
+      }
+      ctx.restore();
 
-    const lineStrip = new THREE.Mesh(
-      new THREE.PlaneGeometry(this.track.roadWidth, 3.0),
-      new THREE.MeshBasicMaterial({ map: this.createCheckerTexture(), side: THREE.DoubleSide })
-    );
-    lineStrip.rotation.x = -Math.PI / 2;
-    lineStrip.position.y = 0.08;
-
-    gantry.add(leftPost, rightPost, banner, lineStrip);
-    gantry.position.set(start.x, start.y, start.z);
-    gantry.rotation.y = start.yaw;
-    this.scene.add(gantry);
-  }
-
-  private createCheckerTexture(): THREE.CanvasTexture {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d')!;
-    const cols = 16;
-    const rows = 4;
-    const cw = canvas.width / cols;
-    const ch = canvas.height / rows;
-    for (let y = 0; y < rows; y++) {
-      for (let x = 0; x < cols; x++) {
-        ctx.fillStyle = (x + y) % 2 === 0 ? '#0f172a' : '#f8fafc';
-        ctx.fillRect(x * cw, y * ch, cw, ch);
+      // Nearby pickup label for local player
+      if (local && local.alive && Math.hypot(local.x - drop.x, local.y - drop.y) < 58) {
+        const label =
+          drop.kind === 'weapon' && drop.weaponId
+            ? `[E] ${WEAPONS[drop.weaponId].shortName}`
+            : drop.kind === 'armor'
+              ? `[E] +${drop.armorValue} ARMOR`
+              : drop.kind === 'medkit'
+                ? '[E] MEDKIT'
+                : drop.kind === 'grenade'
+                  ? '[E] GRENADE'
+                  : '[E] AMMO';
+        this.drawPillLabel(ctx, drop.x, drop.y - 26, label, meta.color);
       }
     }
-    const tex = new THREE.CanvasTexture(canvas);
-    tex.needsUpdate = true;
-    return tex;
-  }
 
-  private buildBoostPads(): void {
-    const padGeo = new THREE.PlaneGeometry(4.2, 6.2);
-    const padMat = new THREE.MeshBasicMaterial({
-      color: '#22d3ee',
-      side: THREE.DoubleSide,
-    });
-    const innerGeo = new THREE.PlaneGeometry(2.4, 4.4);
-    const innerMat = new THREE.MeshBasicMaterial({
-      color: '#facc15',
-      side: THREE.DoubleSide,
-    });
+    // 7. Unopened Loot Crates
+    for (const c of world.crates) {
+      if (c.opened || !this.circleVisible(c.x, c.y, 48, viewLeft, viewTop)) continue;
+      const sprite = atlas.crates[c.kind];
+      const hw = sprite.width / 2;
+      const hh = sprite.height / 2;
 
-    for (const pad of this.track.boostPads) {
-      const grp = new THREE.Group();
-      const outer = new THREE.Mesh(padGeo, padMat);
-      outer.rotation.x = -Math.PI / 2;
-      const inner = new THREE.Mesh(innerGeo, innerMat);
-      inner.rotation.x = -Math.PI / 2;
-      inner.position.y = 0.02;
-      grp.add(outer, inner);
-      grp.position.set(pad.x, pad.y, pad.z);
-      grp.rotation.y = pad.yaw;
-      this.scene.add(grp);
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.34)';
+      ctx.fillRect(c.x - hw + 6, c.y - hh + 8, sprite.width - 4, sprite.height - 4);
+
+      if (c.kind === 'supply_drop' || c.kind === 'military_case') {
+        ctx.save();
+        ctx.strokeStyle =
+          c.kind === 'supply_drop'
+            ? `rgba(245, 158, 11, ${0.45 + pulse * 0.4})`
+            : `rgba(56, 189, 248, ${0.3 + pulse * 0.3})`;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(c.x, c.y, hw + 5 + pulse * 3, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.restore();
+      }
+
+      ctx.drawImage(sprite, c.x - hw, c.y - hh);
+
+      if (nowMs < c.hitFlashUntilMs) {
+        ctx.fillStyle = 'rgba(255,255,255,0.45)';
+        ctx.fillRect(c.x - hw + 4, c.y - hh + 4, sprite.width - 8, sprite.height - 8);
+      }
+
+      if (c.hp < c.maxHp) {
+        ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+        ctx.fillRect(c.x - 18, c.y - hh - 10, 36, 5);
+        ctx.fillStyle = c.kind === 'supply_drop' ? '#f59e0b' : '#22c55e';
+        ctx.fillRect(c.x - 17, c.y - hh - 9, 34 * (c.hp / c.maxHp), 3);
+      }
+
+      if (local && local.alive && Math.hypot(local.x - c.x, local.y - c.y) < 68) {
+        this.drawPillLabel(
+          ctx,
+          c.x,
+          c.y - hh - 20,
+          c.kind === 'supply_drop' ? '[E] OPEN AIRDROP' : '[E] OPEN CRATE',
+          c.kind === 'supply_drop' ? '#fbbf24' : '#38bdf8'
+        );
+      }
     }
-  }
 
-  private buildInitialItemBoxes(): void {
-    const outerGeo = new THREE.BoxGeometry(1.9, 1.9, 1.9);
-    const outerMat = new THREE.MeshPhongMaterial({
-      color: '#facc15',
-      emissive: '#d97706',
-      emissiveIntensity: 0.45,
-      transparent: true,
-      opacity: 0.88,
-    });
-    const coreGeo = new THREE.OctahedronGeometry(0.75);
-    const coreMat = new THREE.MeshBasicMaterial({ color: '#ec4899' });
+    // 8. Walls, Shipping Containers, Sandbags & Boulders
+    for (const w of world.walls) {
+      if (!this.rectVisible(w.x, w.y, w.w, w.h, viewLeft, viewTop)) continue;
+      // Directional shadow
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.34)';
+      ctx.fillRect(w.x + 7, w.y + 8, w.w, w.h);
 
-    for (const box of this.track.initialItemBoxes) {
-      const grp = new THREE.Group();
-      const outer = new THREE.Mesh(outerGeo, outerMat);
-      const core = new THREE.Mesh(coreGeo, coreMat);
-      grp.add(outer, core);
-      grp.position.set(box.x, box.y, box.z);
-      this.scene.add(grp);
-      this.itemBoxMeshes.set(box.id, grp);
+      ctx.fillStyle = atlas.walls[w.kind] ?? '#475569';
+      ctx.fillRect(w.x, w.y, w.w, w.h);
+
+      // Subtle bevel edge
+      ctx.strokeStyle = 'rgba(255,255,255,0.15)';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(w.x + 0.5, w.y + 0.5, w.w - 1, w.h - 1);
     }
-  }
 
-  private createNameSprite(label: string): THREE.Sprite {
-    const canvas = document.createElement('canvas');
-    canvas.width = 256;
-    canvas.height = 64;
-    const ctx = canvas.getContext('2d')!;
-    this.drawTagCanvas(ctx, canvas.width, canvas.height, label);
-    const tex = new THREE.CanvasTexture(canvas);
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
-    const sprite = new THREE.Sprite(mat);
-    sprite.scale.set(4.5, 1.15, 1);
-    sprite.position.set(0, 3.1, 0);
-    return sprite;
-  }
+    // 9. Active Frag Grenades
+    for (const g of state.grenades) {
+      const timeLeft = Math.max(0, g.explodeAtMs - nowMs);
+      const blink = Math.floor(timeLeft / 110) % 2 === 0;
+      ctx.save();
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.14)';
+      ctx.strokeStyle = 'rgba(249, 115, 22, 0.45)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 175, 0, Math.PI * 2);
+      ctx.stroke();
 
-  private drawTagCanvas(ctx: CanvasRenderingContext2D, w: number, h: number, label: string): void {
-    ctx.clearRect(0, 0, w, h);
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.78)';
+      ctx.fillStyle = blink ? '#ef4444' : '#1e293b';
+      ctx.beginPath();
+      ctx.arc(g.x, g.y, 7.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#fbbf24';
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 10. Tactical Laser Sightline for local player
+    if (local && local.alive) {
+      const wpn = getActiveWeapon(local);
+      const wDef = wpn ? WEAPONS[wpn.weaponId] : WEAPONS.pistol;
+      const sightLen = Math.min(wDef.range * 0.72, 460);
+      const grad = ctx.createLinearGradient(
+        local.x,
+        local.y,
+        local.x + Math.cos(local.aimAngle) * sightLen,
+        local.y + Math.sin(local.aimAngle) * sightLen
+      );
+      grad.addColorStop(0, 'rgba(56, 189, 248, 0.28)');
+      grad.addColorStop(1, 'rgba(56, 189, 248, 0)');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = 1.6;
+      ctx.beginPath();
+      ctx.moveTo(
+        local.x + Math.cos(local.aimAngle) * wDef.barrelLength,
+        local.y + Math.sin(local.aimAngle) * wDef.barrelLength
+      );
+      ctx.lineTo(
+        local.x + Math.cos(local.aimAngle) * sightLen,
+        local.y + Math.sin(local.aimAngle) * sightLen
+      );
+      ctx.stroke();
+    }
+
+    // 11. Tactical Operators (Fighters)
+    for (const f of fighters) {
+      if (!f.alive || !this.circleVisible(f.x, f.y, 60, viewLeft, viewTop)) continue;
+      this.drawFighter(ctx, f, local?.id === f.id, local?.teamIndex === f.teamIndex, nowMs);
+    }
+
+    // 12. High-velocity Bullet Tracers
+    for (const b of state.bullets) {
+      ctx.save();
+      const tailX = b.x - b.vx * 0.022;
+      const tailY = b.y - b.vy * 0.022;
+      const grad = ctx.createLinearGradient(tailX, tailY, b.x, b.y);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(0.65, b.color);
+      grad.addColorStop(1, '#ffffff');
+      ctx.strokeStyle = grad;
+      ctx.lineWidth = b.weaponId === 'sniper' ? 4.2 : b.weaponId === 'shotgun' ? 2.6 : 3.1;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(tailX, tailY);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // 13. Cutaway Building Roofs (fade smooth alpha when local player walks inside!)
+    for (const b of world.buildings) {
+      if (!this.rectVisible(b.x, b.y, b.w, b.h, viewLeft, viewTop)) continue;
+      const inside = local && local.alive && pointInRect(local.x, local.y, b.x, b.y, b.w, b.h);
+      const targetAlpha = inside ? 0.1 : 0.94;
+      const prevAlpha = this.roofAlphas.get(b.id) ?? 0.94;
+      const nextAlpha = prevAlpha + (targetAlpha - prevAlpha) * Math.min(1, dt * 10);
+      this.roofAlphas.set(b.id, nextAlpha);
+
+      ctx.save();
+      ctx.globalAlpha = nextAlpha;
+      ctx.fillStyle = atlas.roofs[b.roofStyle] ?? '#475569';
+      ctx.fillRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
+      ctx.strokeStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.lineWidth = 4;
+      ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
+
+      // Ridge cap line
+      ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(b.x + 12, b.y + b.h / 2);
+      ctx.lineTo(b.x + b.w - 12, b.y + b.h / 2);
+      ctx.stroke();
+
+      // Subtle POI name stencil on roof
+      if (nextAlpha > 0.35) {
+        ctx.fillStyle = 'rgba(248, 250, 252, 0.65)';
+        ctx.font = '900 13px Inter, sans-serif';
+        ctx.textAlign = 'center';
+        ctx.fillText(b.name.toUpperCase(), b.x + b.w / 2, b.y + b.h / 2 - 12);
+      }
+      ctx.restore();
+    }
+
+    // 14. Tree Trunks & Overhead Canopies (fade smoothly when player stands beneath!)
+    for (const t of world.trees) {
+      if (!this.circleVisible(t.x, t.y, t.canopyRadius + 20, viewLeft, viewTop)) continue;
+      // Ground shadow
+      ctx.fillStyle = 'rgba(0,0,0,0.26)';
+      ctx.beginPath();
+      ctx.arc(t.x + 12, t.y + 14, t.canopyRadius * 0.92, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Trunk
+      ctx.fillStyle = '#5c3a21';
+      ctx.beginPath();
+      ctx.arc(t.x, t.y, t.trunkRadius, 0, Math.PI * 2);
+      ctx.fill();
+
+      const underTree =
+        local && local.alive && Math.hypot(local.x - t.x, local.y - t.y) < t.canopyRadius + 10;
+      const sprite = atlas.trees[t.variant];
+      const drawSize = t.canopyRadius * 2.35;
+      ctx.save();
+      ctx.globalAlpha = underTree ? 0.28 : 0.92;
+      ctx.drawImage(sprite, t.x - drawSize / 2, t.y - drawSize / 2, drawSize, drawSize);
+      ctx.restore();
+    }
+
+    // 15. Particles (muzzle sparks, shield shatters, explosion rings, dust)
+    for (const p of state.particles) {
+      const life = (nowMs - p.bornAtMs) / p.lifeMs;
+      if (life >= 1) continue;
+      ctx.save();
+      ctx.globalAlpha = Math.max(0, p.alpha * (1 - life));
+      if (p.kind === 'ring') {
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 4 * (1 - life) + 1;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius * (0.25 + life * 0.95), 0, Math.PI * 2);
+        ctx.stroke();
+      } else {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, Math.max(1, p.radius * (1 - life * 0.4)), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    // 16. Floating Damage / Pickup Numbers
+    for (const fl of state.floats) {
+      const age = (nowMs - fl.bornAtMs) / 900;
+      if (age >= 1) continue;
+      ctx.save();
+      ctx.globalAlpha = 1 - age * age;
+      ctx.font = '900 15px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3.5;
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+      const fy = fl.y - age * 28;
+      ctx.strokeText(fl.text, fl.x, fy);
+      ctx.fillStyle = fl.color;
+      ctx.fillText(fl.text, fl.x, fy);
+      ctx.restore();
+    }
+
+    // 17. Battle Royale Shrinking Storm Zone Overlay (even-odd outer fill)
+    const { storm } = state;
+    ctx.save();
     ctx.beginPath();
-    ctx.roundRect(12, 10, w - 24, h - 20, 14);
-    ctx.fill();
-    ctx.strokeStyle = 'rgba(56, 189, 248, 0.8)';
-    ctx.lineWidth = 3;
+    ctx.rect(viewLeft - 60, viewTop - 60, this.width + 120, this.height + 120);
+    ctx.arc(storm.centerX, storm.centerY, Math.max(1, storm.currentRadius), 0, Math.PI * 2, true);
+    ctx.fillStyle =
+      world.def.id === 'rust_refinery'
+        ? 'rgba(185, 28, 28, 0.34)'
+        : 'rgba(109, 40, 217, 0.34)';
+    ctx.fill('evenodd');
+
+    // Pulsing storm plasma ring
+    ctx.strokeStyle = world.def.stormColor;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    ctx.arc(storm.centerX, storm.centerY, Math.max(1, storm.currentRadius), 0, Math.PI * 2);
     ctx.stroke();
 
-    ctx.font = 'bold 24px Inter, sans-serif';
+    // Dotted preview of target safe ring while shrinking
+    if (storm.targetRadius < storm.currentRadius - 8) {
+      ctx.strokeStyle = 'rgba(248, 250, 252, 0.45)';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([12, 10]);
+      ctx.beginPath();
+      ctx.arc(storm.centerX, storm.centerY, storm.targetRadius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    ctx.restore(); // end world transform
+
+    // 18. Screen-space Storm Edge Warning Vignette
+    if (local && local.alive) {
+      const dist = Math.hypot(local.x - storm.centerX, local.y - storm.centerY);
+      if (dist > storm.currentRadius) {
+        const vig = ctx.createRadialGradient(
+          this.width / 2,
+          this.height / 2,
+          this.height * 0.3,
+          this.width / 2,
+          this.height / 2,
+          this.width * 0.72
+        );
+        vig.addColorStop(0, 'rgba(0,0,0,0)');
+        vig.addColorStop(1, 'rgba(124, 58, 237, 0.48)');
+        ctx.fillStyle = vig;
+        ctx.fillRect(0, 0, this.width, this.height);
+      }
+    }
+
+    // 19. Dynamic Aim Crosshair & Hitmarker X
+    this.drawCrosshair(ctx, state.mouseScreenX, state.mouseScreenY, local, nowMs, state.hitmarkerUntilMs);
+  }
+
+  private drawFighter(
+    ctx: CanvasRenderingContext2D,
+    f: FighterState,
+    isLocal: boolean,
+    isTeammate: boolean,
+    nowMs: number
+  ): void {
+    const op = getOperatorDefinition(f.operatorId);
+    const wpn = getActiveWeapon(f);
+    const wDef = wpn ? WEAPONS[wpn.weaponId] : WEAPONS.pistol;
+
+    ctx.save();
+    ctx.translate(f.x, f.y);
+
+    // Subtle ground shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.36)';
+    ctx.beginPath();
+    ctx.ellipse(3, 5, 19, 17, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Teammate / Self selection ring
+    if (isLocal || isTeammate) {
+      ctx.strokeStyle = isLocal ? 'rgba(56, 189, 248, 0.75)' : 'rgba(34, 197, 94, 0.8)';
+      ctx.lineWidth = 2.2;
+      ctx.beginPath();
+      ctx.arc(0, 0, 23, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Rotated upper body + boots + weapon
+    ctx.save();
+    ctx.rotate(f.aimAngle);
+
+    // Animated boots stepping forward/back
+    const stride = Math.sin(f.walkPhase) * 6;
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.ellipse(stride, -11, 6, 4.2, 0, 0, Math.PI * 2);
+    ctx.ellipse(-stride, 11, 6, 4.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Tactical backpack
+    ctx.fillStyle = op.vestColor;
+    ctx.strokeStyle = '#020617';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.roundRect(-17, -10, 9, 20, 4);
+    ctx.fill();
+    ctx.stroke();
+
+    // Armored torso / shoulders
+    ctx.fillStyle = nowMs < f.hitFlashUntilMs ? '#ffffff' : op.suitColor;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 13, 16, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#0f172a';
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+
+    // Tactical chest vest
+    ctx.fillStyle = op.vestColor;
+    ctx.beginPath();
+    ctx.ellipse(2, 0, 9, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Weapon silhouette with recoil kickback
+    const kick = f.recoilOffset;
+    const rarityColor = wpn ? RARITY_META[wpn.rarity].color : '#94a3b8';
+    this.drawWeaponSilhouette(ctx, wDef.id, 14 - kick, 6, 0, 1.0, rarityColor);
+
+    // Muzzle flash radial glow
+    if (nowMs < f.muzzleFlashUntilMs) {
+      const mx = wDef.barrelLength + 4 - kick;
+      const my = 6;
+      const flashGrad = ctx.createRadialGradient(mx, my, 1, mx, my, 24);
+      flashGrad.addColorStop(0, '#ffffff');
+      flashGrad.addColorStop(0.35, wDef.tracerColor);
+      flashGrad.addColorStop(1, 'rgba(255,255,255,0)');
+      ctx.fillStyle = flashGrad;
+      ctx.beginPath();
+      ctx.arc(mx, my, 24, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Operator hands holding gun
+    ctx.fillStyle = op.accentColor;
+    ctx.beginPath();
+    ctx.arc(10 - kick * 0.5, 7, 4.2, 0, Math.PI * 2);
+    ctx.arc(16 - kick * 0.5, 4, 4.0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Tactical Helmet + Glowing Visor
+    ctx.fillStyle = nowMs < f.hitFlashUntilMs ? '#ffffff' : op.suitColor;
+    ctx.beginPath();
+    ctx.arc(0, 0, 10.5, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = '#020617';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+
+    ctx.fillStyle = op.visorColor;
+    ctx.beginPath();
+    ctx.arc(3.5, 0, 7.2, -0.78, 0.78);
+    ctx.fill();
+
+    ctx.restore(); // end rotation
+
+    // Reload / Healing radial progress ring
+    if (f.reloadingUntilMs > nowMs && wpn) {
+      const total = WEAPONS[wpn.weaponId].reloadMs;
+      const prog = 1 - (f.reloadingUntilMs - nowMs) / total;
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 26, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, Math.min(1, prog)));
+      ctx.stroke();
+    } else if (f.healingUntilMs > nowMs) {
+      const prog = 1 - (f.healingUntilMs - nowMs) / 1600;
+      ctx.strokeStyle = '#22c55e';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(0, 0, 26, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0, Math.min(1, prog)));
+      ctx.stroke();
+    }
+
+    // Overhead name & HP/Armor bar for other fighters
+    if (!isLocal) {
+      ctx.font = '700 11px Inter, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = 'rgba(2, 6, 23, 0.85)';
+      ctx.strokeText(f.nickname, 0, -34);
+      ctx.fillStyle = isTeammate ? '#86efac' : '#f8fafc';
+      ctx.fillText(f.nickname, 0, -34);
+
+      // Health bar
+      const bw = 38;
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+      ctx.fillRect(-bw / 2, -28, bw, 6);
+      ctx.fillStyle = isTeammate ? '#22c55e' : '#ef4444';
+      ctx.fillRect(-bw / 2 + 1, -27, (bw - 2) * (f.hp / f.maxHp), 4);
+      if (f.armor > 0) {
+        ctx.fillStyle = '#38bdf8';
+        ctx.fillRect(-bw / 2 + 1, -30, (bw - 2) * (f.armor / f.maxArmor), 2.5);
+      }
+    }
+
+    ctx.restore();
+  }
+
+  private drawWeaponSilhouette(
+    ctx: CanvasRenderingContext2D,
+    weaponId: WeaponId,
+    x: number,
+    y: number,
+    angle: number,
+    scale: number,
+    rarityColor: string
+  ): void {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(angle);
+    ctx.scale(scale, scale);
+
+    ctx.fillStyle = '#0f172a';
+    ctx.strokeStyle = rarityColor;
+    ctx.lineWidth = 1.2;
+
+    if (weaponId === 'pistol') {
+      ctx.fillRect(-4, -2.5, 13, 5);
+      ctx.strokeRect(-4, -2.5, 13, 5);
+    } else if (weaponId === 'smg') {
+      ctx.fillRect(-6, -3, 18, 6);
+      ctx.fillStyle = rarityColor;
+      ctx.fillRect(2, -1.5, 8, 3);
+    } else if (weaponId === 'shotgun') {
+      ctx.fillStyle = '#451a03';
+      ctx.fillRect(-8, -3, 10, 6);
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(2, -2.6, 18, 5.2);
+      ctx.fillStyle = rarityColor;
+      ctx.fillRect(6, -1.3, 9, 2.6);
+    } else if (weaponId === 'rifle') {
+      ctx.fillRect(-8, -3, 24, 6);
+      ctx.fillRect(16, -1.8, 7, 3.6);
+      ctx.fillStyle = rarityColor;
+      ctx.fillRect(0, -1.5, 10, 3);
+    } else if (weaponId === 'sniper') {
+      ctx.fillRect(-10, -2.8, 30, 5.6);
+      ctx.fillRect(20, -1.4, 12, 2.8);
+      ctx.fillStyle = rarityColor;
+      ctx.fillRect(-2, -3.5, 9, 7);
+    } else {
+      // Helios Plasma LMG
+      ctx.fillStyle = '#1e293b';
+      ctx.fillRect(-9, -4, 27, 8);
+      ctx.fillStyle = '#22d3ee';
+      ctx.fillRect(2, -2, 16, 4);
+    }
+
+    ctx.restore();
+  }
+
+  private drawCrosshair(
+    ctx: CanvasRenderingContext2D,
+    mx: number,
+    my: number,
+    local: FighterState | undefined,
+    nowMs: number,
+    hitmarkerUntilMs: number
+  ): void {
+    const spreadGap = local ? 7 + local.recoilOffset * 1.4 : 8;
+    ctx.save();
+    ctx.translate(mx, my);
+
+    ctx.strokeStyle = 'rgba(248, 250, 252, 0.9)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-spreadGap - 7, 0);
+    ctx.lineTo(-spreadGap, 0);
+    ctx.moveTo(spreadGap, 0);
+    ctx.lineTo(spreadGap + 7, 0);
+    ctx.moveTo(0, -spreadGap - 7);
+    ctx.lineTo(0, -spreadGap);
+    ctx.moveTo(0, spreadGap);
+    ctx.lineTo(0, spreadGap + 7);
+    ctx.stroke();
+
+    ctx.fillStyle = '#38bdf8';
+    ctx.beginPath();
+    ctx.arc(0, 0, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Hitmarker X flash
+    if (nowMs < hitmarkerUntilMs) {
+      ctx.strokeStyle = '#ef4444';
+      ctx.lineWidth = 2.6;
+      ctx.beginPath();
+      ctx.moveTo(-9, -9);
+      ctx.lineTo(-4, -4);
+      ctx.moveTo(9, -9);
+      ctx.lineTo(4, -4);
+      ctx.moveTo(-9, 9);
+      ctx.lineTo(-4, 4);
+      ctx.moveTo(9, 9);
+      ctx.lineTo(4, 4);
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  private drawPillLabel(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    text: string,
+    accent: string
+  ): void {
+    ctx.save();
+    ctx.font = '800 11px Inter, sans-serif';
+    const w = ctx.measureText(text).width + 14;
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.88)';
+    ctx.strokeStyle = accent;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, y - 10, w, 20, 6);
+    ctx.fill();
+    ctx.stroke();
     ctx.fillStyle = '#f8fafc';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(label.slice(0, 18), w / 2, h / 2 + 1);
+    ctx.fillText(text, x, y + 0.5);
+    ctx.restore();
   }
 
-  private createKartVisual(racer: RacerState): KartVisual {
-    const def = getKartDefinition(racer.kartId);
-    const root = new THREE.Group();
-    const bodyGroup = new THREE.Group();
-    root.add(bodyGroup);
+  private rectVisible(x: number, y: number, w: number, h: number, vl: number, vt: number): boolean {
+    return x + w >= vl - 80 && x <= vl + this.width + 80 && y + h >= vt - 80 && y <= vt + this.height + 80;
+  }
 
-    // Main kart chassis
-    const primaryMat = new THREE.MeshLambertMaterial({ color: def.primaryColor });
-    const secondaryMat = new THREE.MeshLambertMaterial({ color: def.secondaryColor });
-    const accentMat = new THREE.MeshLambertMaterial({ color: def.accentColor });
-    const darkMat = new THREE.MeshLambertMaterial({ color: '#0f172a' });
-
-    const chassis = new THREE.Mesh(new THREE.BoxGeometry(1.75, 0.55, 3.1), primaryMat);
-    chassis.position.set(0, 0.58, 0);
-    chassis.castShadow = true;
-    bodyGroup.add(chassis);
-
-    const nose = new THREE.Mesh(new THREE.BoxGeometry(1.35, 0.4, 0.9), secondaryMat);
-    nose.position.set(0, 0.5, 1.65);
-    nose.castShadow = true;
-    bodyGroup.add(nose);
-
-    const spoiler = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.16, 0.55), accentMat);
-    spoiler.position.set(0, 1.25, -1.4);
-    bodyGroup.add(spoiler);
-
-    const strutL = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.5, 0.25), darkMat);
-    strutL.position.set(-0.65, 1.0, -1.35);
-    const strutR = strutL.clone();
-    strutR.position.x = 0.65;
-    bodyGroup.add(strutL, strutR);
-
-    // Character driver head + mascot detail
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.55, 14, 12), secondaryMat);
-    head.position.set(0, 1.32, -0.15);
-    head.castShadow = true;
-    bodyGroup.add(head);
-
-    const helmet = new THREE.Mesh(
-      new THREE.SphereGeometry(0.58, 12, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
-      primaryMat
+  private circleVisible(x: number, y: number, r: number, vl: number, vt: number): boolean {
+    return (
+      x + r >= vl - 80 &&
+      x - r <= vl + this.width + 80 &&
+      y + r >= vt - 80 &&
+      y - r <= vt + this.height + 80
     );
-    helmet.position.set(0, 1.36, -0.15);
-    bodyGroup.add(helmet);
-
-    const mascotBadge = this.createCharacterDetail(racer.kartId, accentMat);
-    mascotBadge.position.set(0, 1.32, 0.35);
-    bodyGroup.add(mascotBadge);
-
-    // 4 wheels
-    const wheelGeo = new THREE.CylinderGeometry(0.45, 0.45, 0.38, 14);
-    wheelGeo.rotateZ(Math.PI / 2);
-    const frontWheels: THREE.Mesh[] = [];
-    const rearWheels: THREE.Mesh[] = [];
-
-    const wheelPositions: Array<[number, number, number, boolean]> = [
-      [-1.02, 0.45, 1.05, true],
-      [1.02, 0.45, 1.05, true],
-      [-1.08, 0.48, -1.05, false],
-      [1.08, 0.48, -1.05, false],
-    ];
-    for (const [wx, wy, wz, isFront] of wheelPositions) {
-      const wheel = new THREE.Mesh(wheelGeo, darkMat);
-      wheel.rotation.order = 'YXZ';
-      wheel.position.set(wx, wy, wz);
-      wheel.castShadow = true;
-      bodyGroup.add(wheel);
-      if (isFront) frontWheels.push(wheel);
-      else rearWheels.push(wheel);
-    }
-
-    // Twin boost flame cones
-    const flameGeo = new THREE.ConeGeometry(0.24, 1.25, 8);
-    flameGeo.rotateX(-Math.PI / 2);
-    const flameMat = new THREE.MeshBasicMaterial({ color: '#38bdf8' });
-    const flameLeft = new THREE.Mesh(flameGeo, flameMat);
-    flameLeft.position.set(-0.45, 0.62, -2.05);
-    flameLeft.visible = false;
-    const flameRight = flameLeft.clone();
-    flameRight.position.x = 0.45;
-    bodyGroup.add(flameLeft, flameRight);
-
-    // Drift sparks aura
-    const driftGlow = new THREE.Mesh(
-      new THREE.TorusGeometry(1.15, 0.1, 8, 24),
-      new THREE.MeshBasicMaterial({ color: '#38bdf8', transparent: true, opacity: 0.75 })
-    );
-    driftGlow.rotation.x = Math.PI / 2;
-    driftGlow.position.set(0, 0.25, -0.4);
-    driftGlow.visible = false;
-    bodyGroup.add(driftGlow);
-
-    // Bubblegum Shield sphere
-    const shieldMesh = new THREE.Mesh(
-      new THREE.SphereGeometry(2.15, 18, 16),
-      new THREE.MeshBasicMaterial({
-        color: '#c084fc',
-        transparent: true,
-        opacity: 0.34,
-        wireframe: false,
-      })
-    );
-    shieldMesh.position.y = 1.05;
-    shieldMesh.visible = false;
-    root.add(shieldMesh);
-
-    const tagText = `#${racer.position} ${racer.nickname}`;
-    const nameSprite = this.createNameSprite(tagText);
-    root.add(nameSprite);
-
-    this.scene.add(root);
-
-    return {
-      root,
-      bodyGroup,
-      frontWheels,
-      rearWheels,
-      flameLeft,
-      flameRight,
-      driftGlow,
-      shieldMesh,
-      nameSprite,
-      lastTagText: tagText,
-    };
-  }
-
-  private createCharacterDetail(kartId: KartId, accentMat: THREE.Material): THREE.Object3D {
-    const grp = new THREE.Group();
-    if (kartId === 'tux' || kartId === 'hexley') {
-      const beak = new THREE.Mesh(new THREE.ConeGeometry(0.18, 0.42, 6), accentMat);
-      beak.rotation.x = Math.PI / 2;
-      grp.add(beak);
-    } else if (kartId === 'konqi') {
-      const hornL = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.45, 6), accentMat);
-      hornL.position.set(-0.26, 0.42, -0.35);
-      const hornR = hornL.clone();
-      hornR.position.x = 0.26;
-      grp.add(hornL, hornR);
-    } else if (kartId === 'wilber' || kartId === 'sara') {
-      const earL = new THREE.Mesh(new THREE.ConeGeometry(0.14, 0.38, 5), accentMat);
-      earL.position.set(-0.28, 0.44, -0.35);
-      const earR = earL.clone();
-      earR.position.x = 0.28;
-      grp.add(earL, earR);
-    } else {
-      const fin = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.45, 0.4), accentMat);
-      fin.position.set(0, 0.45, -0.4);
-      grp.add(fin);
-    }
-    return grp;
-  }
-
-  public renderFrame(
-    racers: RacerState[],
-    localRacerId: string,
-    itemBoxes: ItemBoxState[],
-    projectiles: ProjectileState[],
-    nowSec: number,
-    dt: number
-  ): void {
-    // Animate & toggle item boxes
-    for (const box of itemBoxes) {
-      const mesh = this.itemBoxMeshes.get(box.id);
-      if (!mesh) continue;
-      mesh.visible = box.active;
-      if (box.active) {
-        mesh.rotation.y = nowSec * 2.2;
-        mesh.position.y = box.y + Math.sin(nowSec * 3.5 + box.x) * 0.22;
-      }
-    }
-
-    // Sync projectile meshes
-    const activeProjIds = new Set(projectiles.map((p) => p.id));
-    for (const [id, mesh] of this.projectileMeshes.entries()) {
-      if (!activeProjIds.has(id)) {
-        this.scene.remove(mesh);
-        this.projectileMeshes.delete(id);
-      }
-    }
-    for (const p of projectiles) {
-      let mesh = this.projectileMeshes.get(p.id);
-      if (!mesh) {
-        mesh = new THREE.Group();
-        if (p.kind === 'bowling') {
-          const ball = new THREE.Mesh(
-            new THREE.SphereGeometry(0.85, 14, 12),
-            new THREE.MeshPhongMaterial({ color: '#0f172a', emissive: '#f97316', emissiveIntensity: 0.4 })
-          );
-          mesh.add(ball);
-        } else {
-          const gum = new THREE.Mesh(
-            new THREE.ConeGeometry(0.75, 1.5, 10),
-            new THREE.MeshBasicMaterial({ color: '#ec4899' })
-          );
-          gum.rotation.x = Math.PI / 2;
-          mesh.add(gum);
-        }
-        this.scene.add(mesh);
-        this.projectileMeshes.set(p.id, mesh);
-      }
-      mesh.position.set(p.x, p.y, p.z);
-      mesh.rotation.y = p.yaw;
-      mesh.rotation.x += dt * 10;
-    }
-
-    // Update karts
-    let localRacer: RacerState | null = null;
-    for (const racer of racers) {
-      if (racer.id === localRacerId) localRacer = racer;
-
-      let vis = this.kartVisuals.get(racer.id);
-      if (!vis) {
-        vis = this.createKartVisual(racer);
-        this.kartVisuals.set(racer.id, vis);
-      }
-
-      vis.root.position.set(racer.x, racer.y, racer.z);
-      vis.root.rotation.y = racer.yaw;
-
-      // Subtle tilt into drift / cornering
-      const leanAngle = racer.isDrifting ? racer.driftDir * 0.14 : racer.steerAngle * 0.12;
-      vis.bodyGroup.rotation.z += (leanAngle - vis.bodyGroup.rotation.z) * Math.min(1, dt * 10);
-
-      // Wheel rotation & front steer
-      const wheelSpin = racer.speed * dt * 1.4;
-      for (const fw of vis.frontWheels) {
-        fw.rotation.y = -racer.steerAngle * 0.65;
-        fw.rotation.x += wheelSpin;
-      }
-      for (const rw of vis.rearWheels) {
-        rw.rotation.x += wheelSpin;
-      }
-
-      // Boost flame
-      const boosting = racer.boostTimer > 0;
-      vis.flameLeft.visible = boosting;
-      vis.flameRight.visible = boosting;
-      if (boosting) {
-        const flicker = 0.85 + Math.sin(nowSec * 45) * 0.3;
-        vis.flameLeft.scale.set(1, 1, flicker);
-        vis.flameRight.scale.set(1, 1, flicker);
-      }
-
-      // Drift sparks ring color
-      vis.driftGlow.visible = racer.isDrifting && racer.driftTier > 0;
-      if (vis.driftGlow.visible) {
-        const mat = vis.driftGlow.material as THREE.MeshBasicMaterial;
-        mat.color.set(
-          racer.driftTier === 3 ? '#c084fc' : racer.driftTier === 2 ? '#f97316' : '#38bdf8'
-        );
-      }
-
-      // Shield bubble
-      vis.shieldMesh.visible = racer.shieldTimer > 0;
-      if (vis.shieldMesh.visible) {
-        vis.shieldMesh.rotation.y += dt * 1.8;
-      }
-
-      // Update floating rank + nickname badge when changed
-      const desiredTag = `#${racer.position} ${racer.nickname}`;
-      if (vis.lastTagText !== desiredTag) {
-        vis.lastTagText = desiredTag;
-        const mat = vis.nameSprite.material as THREE.SpriteMaterial;
-        const tex = mat.map as THREE.CanvasTexture | null;
-        if (tex && tex.image instanceof HTMLCanvasElement) {
-          const ctx = tex.image.getContext('2d');
-          if (ctx) {
-            this.drawTagCanvas(ctx, tex.image.width, tex.image.height, desiredTag);
-            tex.needsUpdate = true;
-          }
-        }
-      }
-      // Hide local player's own overhead tag so camera view stays clear
-      vis.nameSprite.visible = racer.id !== localRacerId;
-    }
-
-    // Smooth chase camera following local player (or leader)
-    const camTarget = localRacer ?? racers[0];
-    if (camTarget) {
-      const fx = Math.sin(camTarget.yaw);
-      const fz = Math.cos(camTarget.yaw);
-      const dist = this.cameraWide ? 14.5 : 10.2;
-      const height = this.cameraWide ? 7.2 : 4.8;
-
-      const desiredPos = new THREE.Vector3(
-        camTarget.x - fx * dist,
-        camTarget.y + height,
-        camTarget.z - fz * dist
-      );
-      const desiredLook = new THREE.Vector3(
-        camTarget.x + fx * 10,
-        camTarget.y + 1.5,
-        camTarget.z + fz * 10
-      );
-
-      const camAlpha = Math.min(1, dt * 8.5);
-      this.camPos.lerp(desiredPos, camAlpha);
-      this.camLook.lerp(desiredLook, Math.min(1, dt * 12));
-
-      this.camera.position.copy(this.camPos);
-      this.camera.lookAt(this.camLook);
-
-      const targetFov = camTarget.boostTimer > 0 ? 77 : this.cameraWide ? 70 : 64;
-      if (Math.abs(this.camera.fov - targetFov) > 0.1) {
-        this.camera.fov += (targetFov - this.camera.fov) * Math.min(1, dt * 7);
-        this.camera.updateProjectionMatrix();
-      }
-    }
-
-    this.renderer.render(this.scene, this.camera);
-  }
-
-  public dispose(): void {
-    this.resizeObserver?.disconnect();
-    this.scene.traverse((obj) => {
-      if (obj instanceof THREE.Mesh) {
-        obj.geometry.dispose();
-        const mats = Array.isArray(obj.material) ? obj.material : [obj.material];
-        mats.forEach((m) => m.dispose());
-      }
-    });
-    this.renderer.dispose();
   }
 }

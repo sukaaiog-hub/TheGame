@@ -20,9 +20,11 @@ export async function GET() {
   }
 
   const { data: rooms, error } = await supabase
-    .from('rooms')
-    .select('id, code, name, host_id, track_id, laps, max_players, ai_fill, status, created_at, updated_at, room_players(id, nickname, kart_id, seat_index, is_host, is_ready)')
-    .in('status', ['waiting', 'countdown', 'racing'])
+    .from('br_rooms')
+    .select(
+      'id, code, name, host_id, map_id, mode, max_players, bot_count, match_seed, status, created_at, updated_at, br_players(id, nickname, operator_id, seat_index, team_index, is_host, is_ready)'
+    )
+    .in('status', ['waiting', 'countdown', 'active'])
     .order('updated_at', { ascending: false })
     .limit(25);
 

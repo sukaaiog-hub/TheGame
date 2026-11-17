@@ -19,16 +19,20 @@ export async function GET(request: NextRequest) {
     );
   }
 
-  const trackId = request.nextUrl.searchParams.get('trackId');
+  const mapId = request.nextUrl.searchParams.get('mapId');
   let query = supabase
-    .from('race_results')
-    .select('id, track_id, player_id, nickname, kart_id, finish_position, total_time_ms, best_lap_ms, created_at')
+    .from('br_results')
+    .select(
+      'id, map_id, mode, player_id, nickname, operator_id, placement, kills, damage_dealt, survival_ms, created_at'
+    )
     .eq('is_ai', false)
-    .order('total_time_ms', { ascending: true })
+    .order('placement', { ascending: true })
+    .order('kills', { ascending: false })
+    .order('damage_dealt', { ascending: false })
     .limit(20);
 
-  if (trackId && ['lighthouse_bay', 'frozen_tundra', 'magma_caldera'].includes(trackId)) {
-    query = query.eq('track_id', trackId);
+  if (mapId && ['verdan_valley', 'rust_refinery', 'arctic_outpost'].includes(mapId)) {
+    query = query.eq('map_id', mapId);
   }
 
   const { data, error } = await query;
@@ -50,35 +54,46 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = (await request.json()) as {
-      roomId?: string;
-      trackId?: string;
+      roomId?: string | null;
+      mapId?: string;
+      mode?: string;
       playerId?: string;
       nickname?: string;
-      kartId?: string;
+      operatorId?: string;
       isAi?: boolean;
-      finishPosition?: number;
-      totalTimeMs?: number;
-      bestLapMs?: number | null;
+      placement?: number;
+      kills?: number;
+      damageDealt?: number;
+      survivalMs?: number;
     };
 
-    if (!body.trackId || !body.playerId || !body.nickname || !body.kartId || !body.finishPosition || !body.totalTimeMs) {
-      return NextResponse.json({ error: 'Missing required race result fields' }, { status: 400 });
+    if (
+      !body.mapId ||
+      !body.playerId ||
+      !body.nickname ||
+      !body.operatorId ||
+      !body.placement ||
+      body.survivalMs === undefined
+    ) {
+      return NextResponse.json({ error: 'Missing required match result fields' }, { status: 400 });
     }
 
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const safeRoomId = body.roomId && uuidRegex.test(body.roomId) ? body.roomId : null;
 
-    const { error } = await supabase.from('race_results').upsert(
+    const { error } = await supabase.from('br_results').upsert(
       {
         room_id: safeRoomId,
-        track_id: body.trackId,
+        map_id: body.mapId,
+        mode: body.mode === 'coop_squad' ? 'coop_squad' : 'pvp_royale',
         player_id: body.playerId.slice(0, 64),
         nickname: body.nickname.slice(0, 20),
-        kart_id: body.kartId,
+        operator_id: body.operatorId,
         is_ai: Boolean(body.isAi),
-        finish_position: Math.max(1, Math.min(4, Math.round(body.finishPosition))),
-        total_time_ms: Math.max(1000, Math.round(body.totalTimeMs)),
-        best_lap_ms: body.bestLapMs ? Math.max(1000, Math.round(body.bestLapMs)) : null,
+        placement: Math.max(1, Math.round(body.placement)),
+        kills: Math.max(0, Math.round(body.kills ?? 0)),
+        damage_dealt: Math.max(0, Math.round(body.damageDealt ?? 0)),
+        survival_ms: Math.max(1000, Math.round(body.survivalMs)),
       },
       { onConflict: 'room_id,player_id', ignoreDuplicates: true }
     );
