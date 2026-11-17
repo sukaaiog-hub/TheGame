@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   applyRemotePacket,
   buildRaceRoster,
+  computeSyncedStartAtEpochMs,
   extrapolateRemoteKart,
   formatRaceTime,
+  shouldReplacePlayersState,
+  shouldReplaceRoomState,
   toNetworkPacket,
 } from '@/game/multiplayer';
 import { buildTrackData } from '@/game/tracks';
@@ -133,6 +136,37 @@ describe('Network Packet Sync, Sequencing & Extrapolation', () => {
     extrapolateRemoteKart(r2, 0.025);
     expect(r2.z).toBeCloseTo(prevZ + 1.0, 2);
     expect(r1.isLocal).toBe(true);
+
+    // Silence > 2000ms allows peer sequence reset recovery on reconnect
+    r2.lastUpdatedAt = Date.now() - 2500;
+    const pktReset = toNetworkPacket({ ...r2, x: r2.x + 1, z: r2.z + 1 }, 1);
+    expect(applyRemotePacket(r2, pktReset)).toBe(true);
+    expect(r2.lastPacketSeq).toBe(1);
+
+    // Prolonged silence dampens dead-reckoning velocity so ghost karts stop cleanly
+    r2.vx = 50;
+    r2.lastUpdatedAt = Date.now() - 600;
+    extrapolateRemoteKart(r2, 0.05);
+    expect(r2.vx).toBeLessThan(50);
+  });
+
+  it('deduplicates unchanged room/player snapshots and syncs countdowns across clock skew', () => {
+    const rA = makeRoom({ status: 'countdown', started_at: '2026-11-16T10:00:03.400Z' });
+    const rB = { ...rA, updated_at: '2026-11-16T10:00:07.400Z' };
+    expect(shouldReplaceRoomState(rA, rB)).toBe(false);
+    expect(shouldReplaceRoomState(rA, { ...rA, status: 'waiting' })).toBe(true);
+    expect(shouldReplaceRoomState(rA, { ...rA, host_id: 'p2' })).toBe(true);
+
+    const pListA = [makePlayer(0, 'p1'), makePlayer(1, 'p2')];
+    const pListB = pListA.map((p) => ({ ...p, last_seen_at: '2026-11-16T10:00:07.400Z' }));
+    expect(shouldReplacePlayersState(pListA, pListB)).toBe(false);
+    expect(shouldReplacePlayersState(pListA, [makePlayer(0, 'p1')])).toBe(true);
+
+    // Even if host clock is 30 seconds ahead of guest clock, countdown remains 3400ms on guest
+    const hostSentAt = 2_000_000_000_000;
+    const hostStartAt = hostSentAt + 3400;
+    const guestNow = hostSentAt - 30_000;
+    expect(computeSyncedStartAtEpochMs(hostStartAt, hostSentAt, guestNow)).toBe(guestNow + 3400);
   });
 
   it('formats race and lap times cleanly', () => {

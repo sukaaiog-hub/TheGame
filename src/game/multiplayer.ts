@@ -39,11 +39,17 @@ export function toNetworkPacket(racer: RacerState, seq: number): NetworkKartPack
 }
 
 export function applyRemotePacket(racer: RacerState, pkt: NetworkKartPacket): boolean {
-  if (pkt.seq <= racer.lastPacketSeq && racer.lastPacketSeq - pkt.seq < 500) {
+  const now = Date.now();
+  const isRecoveringAfterSilence = now - racer.lastUpdatedAt > 2000;
+  if (
+    !isRecoveringAfterSilence &&
+    pkt.seq <= racer.lastPacketSeq &&
+    racer.lastPacketSeq - pkt.seq < 500
+  ) {
     return false;
   }
   racer.lastPacketSeq = pkt.seq;
-  racer.lastUpdatedAt = Date.now();
+  racer.lastUpdatedAt = now;
 
   const dist = Math.hypot(pkt.x - racer.x, pkt.z - racer.z);
   if (dist > 18) {
@@ -84,6 +90,12 @@ export function applyRemotePacket(racer: RacerState, pkt: NetworkKartPacket): bo
 
 export function extrapolateRemoteKart(racer: RacerState, dt: number): void {
   const clampedDt = Math.min(0.05, Math.max(0.001, dt));
+  // Dampen dead-reckoning velocity if packets pause briefly so ghost karts don't overshoot walls
+  if (Date.now() - racer.lastUpdatedAt > 250) {
+    const decay = Math.pow(0.12, clampedDt);
+    racer.vx *= decay;
+    racer.vz *= decay;
+  }
   racer.x += racer.vx * clampedDt;
   racer.z += racer.vz * clampedDt;
   if (racer.boostTimer > 0) racer.boostTimer = Math.max(0, racer.boostTimer - clampedDt);
@@ -92,6 +104,67 @@ export function extrapolateRemoteKart(racer: RacerState, dt: number): void {
     racer.spinTimer = Math.max(0, racer.spinTimer - clampedDt);
     racer.yaw += 10 * clampedDt;
   }
+}
+
+export function computeSyncedStartAtEpochMs(
+  msgStartAtMs: number,
+  msgSentAtMs?: number,
+  localNowMs: number = Date.now()
+): number {
+  if (typeof msgSentAtMs === 'number' && Number.isFinite(msgSentAtMs)) {
+    const remaining = Math.max(0, Math.min(6000, msgStartAtMs - msgSentAtMs));
+    return localNowMs + remaining;
+  }
+  const diff = msgStartAtMs - localNowMs;
+  if (Math.abs(diff) > 10_000) {
+    return localNowMs + 2500;
+  }
+  return msgStartAtMs;
+}
+
+export function shouldReplaceRoomState(
+  prev: LobbyRoom | null,
+  next: LobbyRoom | null
+): boolean {
+  if (prev === next) return false;
+  if (!prev || !next) return true;
+  return (
+    prev.id !== next.id ||
+    prev.code !== next.code ||
+    prev.name !== next.name ||
+    prev.host_id !== next.host_id ||
+    prev.track_id !== next.track_id ||
+    prev.laps !== next.laps ||
+    prev.max_players !== next.max_players ||
+    prev.ai_fill !== next.ai_fill ||
+    prev.status !== next.status ||
+    prev.started_at !== next.started_at ||
+    prev.finished_at !== next.finished_at
+  );
+}
+
+export function shouldReplacePlayersState(
+  prev: LobbyPlayer[],
+  next: LobbyPlayer[]
+): boolean {
+  if (prev === next) return false;
+  if (prev.length !== next.length) return true;
+  for (let i = 0; i < prev.length; i++) {
+    const a = prev[i];
+    const b = next[i];
+    if (
+      a.id !== b.id ||
+      a.player_id !== b.player_id ||
+      a.nickname !== b.nickname ||
+      a.kart_id !== b.kart_id ||
+      a.seat_index !== b.seat_index ||
+      a.is_host !== b.is_host ||
+      a.is_ready !== b.is_ready
+    ) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function buildRaceRoster(

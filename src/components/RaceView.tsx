@@ -105,6 +105,18 @@ export default function RaceView({
   const track = useMemo(() => buildTrackData(room.track_id), [room.track_id]);
   const isHost = room.host_id === localPlayerId;
 
+  // Keep latest room/players/host flags accessible via refs so DB/lobby updates never reset an active race
+  const roomRef = useRef(room);
+  const playersRef = useRef(players);
+  const isHostRef = useRef(isHost);
+  const startAtRef = useRef(startAtEpochMs);
+  roomRef.current = room;
+  playersRef.current = players;
+  isHostRef.current = isHost;
+  if (!startAtRef.current && startAtEpochMs) {
+    startAtRef.current = startAtEpochMs;
+  }
+
   const [muted, setMuted] = useState(false);
   const [showTouchControls, setShowTouchControls] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -196,7 +208,11 @@ export default function RaceView({
     const renderer = new KartSceneRenderer(canvasHostRef.current, track);
     rendererRef.current = renderer;
 
-    const racers: RacerState[] = buildRaceRoster(room, players, localPlayerId, track);
+    const initialRoom = roomRef.current;
+    const initialPlayers = playersRef.current;
+    const raceStartEpochMs = startAtRef.current || Date.now() + 3000;
+
+    const racers: RacerState[] = buildRaceRoster(initialRoom, initialPlayers, localPlayerId, track);
     const itemBoxes: ItemBoxState[] = track.initialItemBoxes.map((b) => ({ ...b }));
     const projectiles: ProjectileState[] = [];
 
@@ -223,8 +239,8 @@ export default function RaceView({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            roomId: isSolo ? null : room.id,
-            trackId: room.track_id,
+            roomId: isSolo ? null : initialRoom.id,
+            trackId: initialRoom.track_id,
             playerId: local.id,
             nickname: local.nickname,
             kartId: local.kartId,
@@ -244,7 +260,7 @@ export default function RaceView({
       if (msg.type === 'kart_state') {
         const target = racers.find((r) => r.id === msg.packet.id && !r.isLocal);
         if (target) applyRemotePacket(target, msg.packet);
-      } else if (msg.type === 'ai_batch' && !isHost) {
+      } else if (msg.type === 'ai_batch' && !isHostRef.current) {
         for (const pkt of msg.packets) {
           const target = racers.find((r) => r.id === pkt.id && r.isAi);
           if (target) applyRemotePacket(target, pkt);
@@ -304,8 +320,9 @@ export default function RaceView({
       lastTime = nowPerf;
 
       const epochNow = Date.now();
-      const msUntilStart = startAtEpochMs - epochNow;
-      const elapsedMs = Math.max(0, epochNow - startAtEpochMs);
+      const msUntilStart = raceStartEpochMs - epochNow;
+      const elapsedMs = Math.max(0, epochNow - raceStartEpochMs);
+      const isHostNow = isHostRef.current;
 
       let countdownLabel = '';
       if (msUntilStart > 2100) {
@@ -364,7 +381,7 @@ export default function RaceView({
 
           const prevLap = r.lap;
           const prevBoost = r.boostTimer;
-          const stepRes = stepKartPhysics(r, input, track, dt, elapsedMs, room.laps, canMove);
+          const stepRes = stepKartPhysics(r, input, track, dt, elapsedMs, initialRoom.laps, canMove);
 
           if (stepRes.triggeredDriftBoostTier > 0 || (prevBoost <= 0.05 && r.boostTimer > 0.5)) {
             sound.playBoost();
@@ -403,9 +420,9 @@ export default function RaceView({
               }
             }
           }
-        } else if (r.isAi && isHost) {
+        } else if (r.isAi && isHostNow) {
           const aiIn = computeAiInput(r, racers, track, elapsedMs);
-          stepKartPhysics(r, aiIn, track, dt, elapsedMs, room.laps, canMove);
+          stepKartPhysics(r, aiIn, track, dt, elapsedMs, initialRoom.laps, canMove);
           if (canMove && !r.finished && aiIn.useItem && r.heldItem) {
             const itemRes = useRacerItem(r, racers);
             if (itemRes.spawnedProjectile) {
@@ -443,7 +460,7 @@ export default function RaceView({
           if (col.racerId === localRacer.id) {
             sound.playItemPickup();
           }
-          if (col.racerId === localRacer.id || isHost) {
+          if (col.racerId === localRacer.id || isHostNow) {
             channelRef.current?.send({ type: 'item_box_taken', boxId: col.boxId });
           }
         }
@@ -453,7 +470,7 @@ export default function RaceView({
           const target = racers.find((r) => r.id === h.targetId);
           if (!target) continue;
           // Authority: hit applies cleanly on local target or host for AI targets
-          if (target.isLocal || (isHost && target.isAi)) {
+          if (target.isLocal || (isHostNow && target.isAi)) {
             const res = applyHitToRacer(target);
             if (target.isLocal) sound.playHit(res.blockedByShield);
             channelRef.current?.send({
@@ -484,7 +501,7 @@ export default function RaceView({
           type: 'kart_state',
           packet: toNetworkPacket(localRacer, packetSeq),
         });
-        if (isHost) {
+        if (isHostNow) {
           const aiPackets = racers.filter((r) => r.isAi).map((r) => toNetworkPacket(r, packetSeq));
           if (aiPackets.length > 0) {
             channelRef.current?.send({ type: 'ai_batch', packets: aiPackets });
@@ -505,8 +522,8 @@ export default function RaceView({
           elapsedMs,
           position: localRacer.position,
           totalRacers: racers.length,
-          lap: Math.min(room.laps, localRacer.lap),
-          totalLaps: room.laps,
+          lap: Math.min(initialRoom.laps, localRacer.lap),
+          totalLaps: initialRoom.laps,
           speedKmh: Math.round(Math.abs(localRacer.speed) * 2.4),
           driftTier: localRacer.isDrifting ? localRacer.driftTier : 0,
           heldItem: localRacer.heldItem,
@@ -539,7 +556,7 @@ export default function RaceView({
       sound.dispose();
       renderer.dispose();
     };
-  }, [room, players, localPlayerId, startAtEpochMs, isSolo, track, isHost, channelRef, incomingBroadcastRef]);
+  }, [room.id, room.laps, track, localPlayerId, isSolo, channelRef, incomingBroadcastRef]);
 
   const toggleMute = () => {
     const next = !muted;

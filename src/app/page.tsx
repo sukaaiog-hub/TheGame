@@ -4,7 +4,12 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import LobbyScreen from '@/components/LobbyScreen';
 import RaceView from '@/components/RaceView';
 import WaitingRoom from '@/components/WaitingRoom';
-import { MultiplayerRoomChannel } from '@/game/multiplayer';
+import {
+  computeSyncedStartAtEpochMs,
+  MultiplayerRoomChannel,
+  shouldReplacePlayersState,
+  shouldReplaceRoomState,
+} from '@/game/multiplayer';
 import type {
   KartId,
   LobbyPlayer,
@@ -40,6 +45,10 @@ export default function HomePage() {
   const channelRef = useRef<MultiplayerRoomChannel | null>(null);
   const incomingBroadcastRef = useRef<((msg: MultiplayerBroadcast) => void) | null>(null);
   const autoJoinedRef = useRef(false);
+  const roomRef = useRef<LobbyRoom | null>(null);
+  const playersRef = useRef<LobbyPlayer[]>([]);
+  roomRef.current = room;
+  playersRef.current = players;
 
   // Initialize persistent browser identity & check ?room=XXXXXX URL parameter
   useEffect(() => {
@@ -73,15 +82,29 @@ export default function HomePage() {
         return;
       }
 
+      const prevRoom = roomRef.current;
       const typedRoom = roomRow as LobbyRoom;
-      setRoom(typedRoom);
-      setPlayers((playerRows ?? []) as LobbyPlayer[]);
+      const nextPlayers = (playerRows ?? []) as LobbyPlayer[];
 
-      if (typedRoom.status === 'countdown' || typedRoom.status === 'racing') {
-        const startedAtMs = typedRoom.started_at
+      const wasRacing =
+        prevRoom?.status === 'countdown' || prevRoom?.status === 'racing';
+      const isNowRacing =
+        typedRoom.status === 'countdown' || typedRoom.status === 'racing';
+
+      if (!wasRacing && isNowRacing) {
+        const rawStart = typedRoom.started_at
           ? new Date(typedRoom.started_at).getTime()
           : Date.now() + 3000;
-        setStartAtEpochMs(startedAtMs);
+        setStartAtEpochMs(computeSyncedStartAtEpochMs(rawStart));
+      }
+
+      if (shouldReplaceRoomState(prevRoom, typedRoom)) {
+        roomRef.current = typedRoom;
+        setRoom(typedRoom);
+      }
+      if (shouldReplacePlayersState(playersRef.current, nextPlayers)) {
+        playersRef.current = nextPlayers;
+        setPlayers(nextPlayers);
       }
     } catch {
       // ignore transient poll failures
@@ -102,18 +125,27 @@ export default function HomePage() {
     const ch = new MultiplayerRoomChannel(supabase, room.code, room.id, playerId, {
       onBroadcast: (msg) => {
         if (msg.type === 'race_start') {
-          setStartAtEpochMs(msg.startAtEpochMs);
-          setRoom((prev) =>
-            prev
-              ? {
-                  ...prev,
-                  status: 'countdown',
-                  track_id: msg.trackId,
-                  laps: msg.laps,
-                  started_at: new Date(msg.startAtEpochMs).toISOString(),
-                }
-              : prev
-          );
+          const alreadyRacing =
+            roomRef.current?.status === 'countdown' ||
+            roomRef.current?.status === 'racing';
+          if (!alreadyRacing) {
+            const syncedStart = computeSyncedStartAtEpochMs(
+              msg.startAtEpochMs,
+              msg.sentAtEpochMs
+            );
+            setStartAtEpochMs(syncedStart);
+            setRoom((prev) =>
+              prev
+                ? {
+                    ...prev,
+                    status: 'countdown',
+                    track_id: msg.trackId,
+                    laps: msg.laps,
+                    started_at: new Date(msg.startAtEpochMs).toISOString(),
+                  }
+                : prev
+            );
+          }
         } else if (msg.type === 'lobby_nudge') {
           void refreshRoomSnapshot(room.id);
         }
@@ -126,9 +158,13 @@ export default function HomePage() {
     });
     channelRef.current = ch;
 
-    // Backup lightweight lobby sync poll every 4s while waiting
+    // Backup lobby sync poll every 4s while waiting (skip during active races; 12s fallback only for rematch recovery)
+    let tick = 0;
     const poll = setInterval(() => {
-      void refreshRoomSnapshot(room.id);
+      tick += 1;
+      if (roomRef.current?.status === 'waiting' || tick % 3 === 0) {
+        void refreshRoomSnapshot(room.id);
+      }
     }, 4000);
 
     return () => {
@@ -324,23 +360,8 @@ export default function HomePage() {
 
   const handleStartRace = async () => {
     if (!room || room.host_id !== playerId) return;
-    const startAt = Date.now() + 3400;
-    const supabase = getSupabaseClient();
-
-    await supabase
-      .from('rooms')
-      .update({
-        status: 'countdown',
-        started_at: new Date(startAt).toISOString(),
-      })
-      .eq('id', room.id);
-
-    channelRef.current?.send({
-      type: 'race_start',
-      startAtEpochMs: startAt,
-      trackId: room.track_id,
-      laps: room.laps,
-    });
+    const sentAt = Date.now();
+    const startAt = sentAt + 3400;
 
     setStartAtEpochMs(startAt);
     setRoom((prev) =>
@@ -352,6 +373,23 @@ export default function HomePage() {
           }
         : prev
     );
+
+    channelRef.current?.send({
+      type: 'race_start',
+      startAtEpochMs: startAt,
+      sentAtEpochMs: sentAt,
+      trackId: room.track_id,
+      laps: room.laps,
+    });
+
+    const supabase = getSupabaseClient();
+    await supabase
+      .from('rooms')
+      .update({
+        status: 'countdown',
+        started_at: new Date(startAt).toISOString(),
+      })
+      .eq('id', room.id);
   };
 
   const handleRematch = async () => {
@@ -422,6 +460,7 @@ export default function HomePage() {
   if (room.status === 'countdown' || room.status === 'racing') {
     return (
       <RaceView
+        key={room.id}
         room={room}
         players={players}
         localPlayerId={playerId}

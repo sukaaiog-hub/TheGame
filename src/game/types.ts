@@ -192,7 +192,13 @@ export interface NetworkKartPacket {
 }
 
 export type MultiplayerBroadcast =
-  | { type: 'race_start'; startAtEpochMs: number; trackId: TrackId; laps: number }
+  | {
+      type: 'race_start';
+      startAtEpochMs: number;
+      sentAtEpochMs?: number;
+      trackId: TrackId;
+      laps: number;
+    }
   | { type: 'kart_state'; packet: NetworkKartPacket }
   | { type: 'ai_batch'; packets: NetworkKartPacket[] }
   | { type: 'item_box_taken'; boxId: string }
