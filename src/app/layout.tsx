@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'DROPZONE ROYALE — Top-Down Multiplayer Battle Royale',
+  title: 'TuxKart Rush — 3D Multiplayer Kart Racing',
   description:
-    'Tactical 2D top-down Battle Royale shooter for 3–4 players with procedural terrain, loot crates, orbital airdrops, shrinking storm zone, and Supabase Realtime multiplayer.',
+    'SuperTuxKart-inspired 3D WebGL multiplayer arcade kart racer for 3-4 players, powered by Three.js, Supabase Realtime, and Vercel.',
 };
 
 export default function RootLayout({
@@ -14,7 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="min-h-screen bg-[#060913] text-slate-100 antialiased selection:bg-amber-400/30">
+      <body className="min-h-screen bg-[#060913] text-slate-100 antialiased selection:bg-cyan-400/30">
         {children}
       </body>
     </html>

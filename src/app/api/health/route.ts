@@ -6,7 +6,7 @@ export async function GET() {
 
   return NextResponse.json({
     ok: true,
-    service: 'dropzone-royale',
+    service: 'tuxkart-rush',
     supabaseConfigured: hasSupabaseUrl && hasAnonKey,
     timestamp: new Date().toISOString(),
   });

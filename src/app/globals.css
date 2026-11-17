@@ -14,15 +14,16 @@ body {
   overflow-x: hidden;
 }
 
+/* Custom arcade animations */
 @keyframes pulse-glow {
   0%, 100% {
-    box-shadow: 0 0 18px rgba(245, 158, 11, 0.25);
+    box-shadow: 0 0 18px rgba(56, 189, 248, 0.35);
   }
   50% {
-    box-shadow: 0 0 32px rgba(245, 158, 11, 0.55);
+    box-shadow: 0 0 32px rgba(56, 189, 248, 0.7);
   }
 }
 
-.royale-glow {
+.arcade-glow {
   animation: pulse-glow 2.4s ease-in-out infinite;
 }

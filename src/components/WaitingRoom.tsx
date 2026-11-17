@@ -1,51 +1,47 @@
 'use client';
 
 import React, { useState } from 'react';
-import { OPERATOR_LIST } from '@/game/operators';
-import type { GameMode, BrPlayer, BrRoom, MapId, OperatorId } from '@/game/types';
-import { MAP_LIST } from '@/game/world';
+import { Check, Copy, Crown, LogOut, Play, Sparkles, Users } from 'lucide-react';
+import { getKartDefinition, KART_LIST } from '@/game/karts';
+import { TRACK_LIST } from '@/game/tracks';
+import type { KartId, LobbyPlayer, LobbyRoom, TrackId } from '@/game/types';
 
 interface WaitingRoomProps {
-  room: BrRoom;
-  players: BrPlayer[];
+  room: LobbyRoom;
+  players: LobbyPlayer[];
   localPlayerId: string;
-  onlinePlayerIds: string[];
+  onlinePresenceIds: string[];
+  onSelectKart: (kartId: KartId) => Promise<void>;
   onToggleReady: () => Promise<void>;
-  onSelectOperator: (operatorId: OperatorId) => Promise<void>;
-  onUpdateSettings: (opts: { mapId?: MapId; mode?: GameMode; botCount?: number }) => Promise<void>;
-  onStartMatch: () => Promise<void>;
+  onUpdateRoomSettings: (patch: Partial<Pick<LobbyRoom, 'track_id' | 'laps' | 'max_players' | 'ai_fill'>>) => Promise<void>;
+  onStartRace: () => Promise<void>;
   onLeaveRoom: () => Promise<void>;
-  busy: boolean;
-  errorMessage?: string | null;
 }
 
 export default function WaitingRoom({
   room,
   players,
   localPlayerId,
-  onlinePlayerIds,
+  onlinePresenceIds,
+  onSelectKart,
   onToggleReady,
-  onSelectOperator,
-  onUpdateSettings,
-  onStartMatch,
+  onUpdateRoomSettings,
+  onStartRace,
   onLeaveRoom,
-  busy,
-  errorMessage,
 }: WaitingRoomProps) {
   const [copied, setCopied] = useState(false);
 
   const localPlayer = players.find((p) => p.player_id === localPlayerId);
-  const isHost = room.host_id === localPlayerId || Boolean(localPlayer?.is_host);
+  const isHost = room.host_id === localPlayerId;
   const sortedPlayers = [...players].sort((a, b) => a.seat_index - b.seat_index);
-  const allReady = sortedPlayers.length >= 1 && sortedPlayers.every((p) => p.is_host || p.is_ready);
-  const canLaunch = isHost && (sortedPlayers.length >= 2 || room.bot_count >= 1) && allReady;
-
-  const shareUrl =
-    typeof window !== 'undefined' ? `${window.location.origin}?room=${room.code}` : room.code;
 
   const copyInvite = async () => {
+    const url =
+      typeof window !== 'undefined'
+        ? `${window.location.origin}/?room=${room.code}`
+        : room.code;
     try {
-      await navigator.clipboard.writeText(shareUrl);
+      await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
@@ -53,267 +49,311 @@ export default function WaitingRoom({
     }
   };
 
+  const seats = Array.from({ length: room.max_players }, (_, seatIndex) => {
+    const occupant = sortedPlayers.find((p) => p.seat_index === seatIndex);
+    return { seatIndex, occupant };
+  });
+
+  const nonHostReadyCount = players.filter((p) => !p.is_host && p.is_ready).length;
+  const nonHostTotal = players.filter((p) => !p.is_host).length;
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#1e293b_0%,_#090d16_60%,_#03060d_100%)] px-4 py-8 text-slate-100">
-      <div className="mx-auto max-w-5xl space-y-6">
-        {/* Top Banner */}
-        <div className="flex flex-col justify-between gap-4 rounded-3xl border border-amber-500/30 bg-slate-900/80 p-6 backdrop-blur sm:flex-row sm:items-center">
+    <div className="min-h-screen bg-[radial-gradient(ellipse_at_top,_#112a4d_0%,_#060913_70%)] px-4 py-6 text-slate-100 sm:px-6">
+      <div className="mx-auto max-w-6xl">
+        {/* Top Lobby Bar */}
+        <header className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-cyan-500/25 bg-slate-900/80 p-5 backdrop-blur">
           <div>
-            <div className="mb-1 flex items-center gap-2">
-              <span className="rounded-lg bg-amber-500/20 px-2.5 py-1 font-mono text-xs font-black tracking-widest text-amber-300">
-                CODE: {room.code}
-              </span>
-              <span className="rounded-lg bg-cyan-500/15 px-2.5 py-1 text-xs font-bold text-cyan-300">
-                {room.mode === 'coop_squad' ? 'Co-op Squad vs Bots' : 'PvP Free-For-All'}
-              </span>
+            <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-widest text-cyan-400">
+              <Users className="h-4 w-4" />
+              Multiplayer Paddock ({players.length}/{room.max_players} Humans)
             </div>
-            <h1 className="text-2xl font-black text-white sm:text-3xl">{room.name}</h1>
-            <p className="text-xs text-slate-400">
-              {sortedPlayers.length}/{room.max_players} Human Survivors • {room.bot_count} AI Rivals
-            </p>
+            <h1 className="mt-1 text-2xl font-black text-white sm:text-3xl">{room.name}</h1>
           </div>
 
-          <div className="flex flex-wrap gap-2">
+          <div className="flex flex-wrap items-center gap-3">
             <button
               type="button"
               onClick={() => void copyInvite()}
-              className="rounded-xl border border-cyan-400/40 bg-cyan-500/15 px-4 py-2.5 text-xs font-black text-cyan-200 transition hover:bg-cyan-500/25"
+              className="flex items-center gap-2 rounded-xl border border-cyan-500/40 bg-slate-950 px-4 py-2.5 transition hover:border-cyan-400"
             >
-              {copied ? 'Invite Link Copied!' : 'Copy Invite Link'}
+              <span className="text-xs font-semibold uppercase text-slate-400">Code</span>
+              <span className="font-mono text-lg font-black tracking-widest text-cyan-300">
+                {room.code}
+              </span>
+              {copied ? (
+                <Check className="h-4 w-4 text-emerald-400" />
+              ) : (
+                <Copy className="h-4 w-4 text-slate-400" />
+              )}
             </button>
+
             <button
               type="button"
-              disabled={busy}
               onClick={() => void onLeaveRoom()}
-              className="rounded-xl border border-rose-500/40 bg-rose-500/10 px-4 py-2.5 text-xs font-black text-rose-200 transition hover:bg-rose-500/20"
+              className="flex items-center gap-1.5 rounded-xl border border-slate-700 bg-slate-800/80 px-4 py-2.5 text-sm font-bold text-slate-200 transition hover:bg-rose-600/25 hover:text-rose-200"
             >
-              Leave Lobby
+              <LogOut className="h-4 w-4" />
+              Leave
             </button>
           </div>
-        </div>
+        </header>
 
-        {errorMessage && (
-          <div className="rounded-2xl border border-rose-500/50 bg-rose-950/60 px-4 py-3 text-sm font-semibold text-rose-200">
-            {errorMessage}
-          </div>
-        )}
-
-        {/* Squad Roster + Settings */}
         <div className="grid gap-6 lg:grid-cols-12">
-          {/* 4 Drop Pod Seats */}
-          <div className="space-y-3 rounded-3xl border border-slate-700/80 bg-slate-900/75 p-6 lg:col-span-7">
-            <h2 className="text-sm font-black tracking-wider text-slate-300 uppercase">
-              Drop Pod Roster ({sortedPlayers.length}/{room.max_players})
-            </h2>
+          {/* 4-Seat Starting Grid */}
+          <section className="space-y-4 rounded-2xl border border-slate-800 bg-slate-900/75 p-5 lg:col-span-7">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-extrabold text-white">
+                Starting Grid ({room.max_players} Racers)
+              </h2>
+              <span className="text-xs text-slate-400">
+                Share invite link to bring 3–4 players into this room
+              </span>
+            </div>
+
             <div className="grid gap-3 sm:grid-cols-2">
-              {Array.from({ length: room.max_players }).map((_, seat) => {
-                const p = sortedPlayers.find((item) => item.seat_index === seat);
-                if (!p) {
+              {seats.map(({ seatIndex, occupant }) => {
+                if (!occupant) {
                   return (
                     <div
-                      key={seat}
-                      className="flex h-24 items-center justify-center rounded-2xl border border-dashed border-slate-800 bg-slate-950/40 text-xs font-semibold text-slate-500"
+                      key={seatIndex}
+                      className="flex min-h-[116px] flex-col justify-between rounded-xl border border-dashed border-slate-700 bg-slate-950/50 p-4"
                     >
-                      Open Slot #{seat + 1} — Share Code {room.code}
+                      <div className="flex items-center justify-between text-xs font-bold text-slate-500">
+                        <span>GRID SEAT #{seatIndex + 1}</span>
+                        <span>{room.ai_fill ? 'AI FILL ACTIVE' : 'OPEN'}</span>
+                      </div>
+                      <div className="text-sm font-semibold text-slate-400">
+                        {room.ai_fill
+                          ? 'AI Bot will race here unless a human joins'
+                          : 'Waiting for another player...'}
+                      </div>
                     </div>
                   );
                 }
 
-                const op = OPERATOR_LIST.find((o) => o.id === p.operator_id) ?? OPERATOR_LIST[0];
+                const kDef = getKartDefinition(occupant.kart_id);
+                const isSelf = occupant.player_id === localPlayerId;
                 const isOnline =
-                  onlinePlayerIds.length === 0 || onlinePlayerIds.includes(p.player_id);
-                const isMe = p.player_id === localPlayerId;
+                  onlinePresenceIds.length === 0 ||
+                  onlinePresenceIds.includes(occupant.player_id);
 
                 return (
                   <div
-                    key={p.id}
-                    className={`flex items-center justify-between rounded-2xl border p-3.5 ${
-                      isMe
-                        ? 'border-cyan-400/50 bg-cyan-950/25'
-                        : 'border-slate-800 bg-slate-950/75'
+                    key={occupant.id}
+                    className={`flex min-h-[116px] flex-col justify-between rounded-xl border p-4 transition ${
+                      isSelf
+                        ? 'border-cyan-400 bg-cyan-500/10'
+                        : 'border-slate-700 bg-slate-950/80'
                     }`}
                   >
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div
-                        className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border-2 border-white/25 text-xs font-black text-white shadow-inner"
-                        style={{ backgroundColor: op.suitColor }}
-                      >
-                        {op.name.slice(0, 2).toUpperCase()}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate text-sm font-black text-white">
-                            {p.nickname}
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-bold text-slate-400">
+                        SEAT #{seatIndex + 1} {isSelf ? '(YOU)' : ''}
+                      </span>
+                      <div className="flex items-center gap-1.5">
+                        {occupant.is_host && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-300">
+                            <Crown className="h-3 w-3" /> HOST
                           </span>
-                          {p.is_host && (
-                            <span className="rounded bg-amber-500/25 px-1.5 py-0.5 text-[10px] font-black text-amber-300">
-                              HOST
-                            </span>
-                          )}
-                        </div>
-                        <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
-                          <span
-                            className={`h-2 w-2 rounded-full ${
-                              isOnline ? 'bg-emerald-400' : 'bg-slate-600'
-                            }`}
-                          />
-                          <span>{op.name}</span>
+                        )}
+                        <span
+                          className={`h-2 w-2 rounded-full ${
+                            isOnline ? 'bg-emerald-400' : 'bg-slate-500'
+                          }`}
+                          title={isOnline ? 'Connected' : 'Syncing'}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="my-1 flex items-center gap-2.5">
+                      <span
+                        className="h-8 w-8 shrink-0 rounded-lg border border-white/20"
+                        style={{ backgroundColor: kDef.primaryColor }}
+                      />
+                      <div>
+                        <div className="font-extrabold text-white">{occupant.nickname}</div>
+                        <div className="text-xs text-slate-400">
+                          {kDef.name} ({kDef.species})
                         </div>
                       </div>
                     </div>
 
-                    <span
-                      className={`rounded-lg px-2.5 py-1 text-[11px] font-black uppercase ${
-                        p.is_host || p.is_ready
-                          ? 'bg-emerald-500/20 text-emerald-300'
-                          : 'bg-slate-800 text-slate-400'
-                      }`}
-                    >
-                      {p.is_host ? 'Leader' : p.is_ready ? 'Ready' : 'Waiting'}
-                    </span>
+                    <div className="flex justify-end">
+                      <span
+                        className={`rounded-full px-2.5 py-0.5 text-[11px] font-bold ${
+                          occupant.is_ready || occupant.is_host
+                            ? 'bg-emerald-500/20 text-emerald-300'
+                            : 'bg-slate-800 text-slate-400'
+                        }`}
+                      >
+                        {occupant.is_host
+                          ? 'Host Ready'
+                          : occupant.is_ready
+                            ? 'READY!'
+                            : 'Picking Kart...'}
+                      </span>
+                    </div>
                   </div>
                 );
               })}
             </div>
 
-            {/* Operator Selector */}
-            <div className="pt-3">
-              <div className="mb-2 text-xs font-bold tracking-wider text-slate-400 uppercase">
-                Select Tactical Operator Armor
-              </div>
+            {/* Kart Selection Garage */}
+            <div className="pt-2">
+              <h3 className="mb-2.5 text-sm font-bold uppercase tracking-wider text-slate-300">
+                Your Kart Selection
+              </h3>
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-                {OPERATOR_LIST.map((op) => {
-                  const chosen = localPlayer?.operator_id === op.id;
+                {KART_LIST.map((k) => {
+                  const chosen = localPlayer?.kart_id === k.id;
                   return (
                     <button
-                      key={op.id}
+                      key={k.id}
                       type="button"
-                      disabled={busy}
-                      onClick={() => void onSelectOperator(op.id)}
-                      className={`flex items-center gap-2 rounded-xl border p-2.5 text-left transition ${
+                      onClick={() => void onSelectKart(k.id)}
+                      className={`rounded-xl border p-2.5 text-left transition ${
                         chosen
-                          ? 'border-amber-400 bg-amber-500/15'
+                          ? 'border-cyan-400 bg-cyan-500/15'
                           : 'border-slate-800 bg-slate-950/70 hover:border-slate-600'
                       }`}
                     >
-                      <span
-                        className="h-4 w-4 shrink-0 rounded-full border border-white/40"
-                        style={{ backgroundColor: op.suitColor }}
-                      />
-                      <div className="min-w-0">
-                        <div className="text-xs font-black text-white">{op.name}</div>
-                        <div className="truncate text-[10px] text-slate-400">{op.role}</div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-sm font-bold text-white">{k.name}</span>
+                        <span
+                          className="h-3 w-3 rounded-full"
+                          style={{ backgroundColor: k.primaryColor }}
+                        />
                       </div>
+                      <p className="mt-1 line-clamp-2 text-[11px] text-slate-400">{k.tagline}</p>
                     </button>
                   );
                 })}
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Match Settings & Launch */}
-          <div className="flex flex-col justify-between gap-4 rounded-3xl border border-slate-700/80 bg-slate-900/75 p-6 lg:col-span-5">
+          {/* Race Settings & Launch Controls */}
+          <section className="flex flex-col justify-between rounded-2xl border border-slate-800 bg-slate-900/75 p-5 lg:col-span-5">
             <div className="space-y-4">
-              <h2 className="text-sm font-black tracking-wider text-slate-300 uppercase">
-                Match Configuration
-              </h2>
+              <h2 className="text-lg font-extrabold text-white">Race Settings</h2>
 
               <div>
-                <label className="mb-1.5 block text-xs font-bold text-slate-400 uppercase">
-                  Map Biome
+                <label className="mb-1.5 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Circuit
                 </label>
-                <div className="grid grid-cols-1 gap-2">
-                  {MAP_LIST.map((m) => (
-                    <button
-                      key={m.id}
-                      type="button"
-                      disabled={!isHost || busy}
-                      onClick={() => void onUpdateSettings({ mapId: m.id })}
-                      className={`flex items-center justify-between rounded-xl border px-3.5 py-2.5 text-left transition ${
-                        room.map_id === m.id
-                          ? 'border-amber-400 bg-amber-500/15'
-                          : 'border-slate-800 bg-slate-950/70'
-                      } ${!isHost ? 'cursor-default opacity-80' : 'hover:border-slate-600'}`}
-                    >
-                      <div>
-                        <div className="text-xs font-black text-white">{m.name}</div>
-                        <div className="text-[11px] text-slate-400">{m.subtitle}</div>
-                      </div>
-                      <span
-                        className="h-3 w-3 rounded-full"
-                        style={{ backgroundColor: m.accentColor }}
-                      />
-                    </button>
-                  ))}
+                <div className="grid gap-2">
+                  {TRACK_LIST.map((t) => {
+                    const selected = room.track_id === t.id;
+                    return (
+                      <button
+                        key={t.id}
+                        type="button"
+                        disabled={!isHost}
+                        onClick={() => void onUpdateRoomSettings({ track_id: t.id as TrackId })}
+                        className={`flex items-center justify-between rounded-xl border p-3 text-left transition ${
+                          selected
+                            ? 'border-cyan-400 bg-cyan-500/15'
+                            : 'border-slate-800 bg-slate-950/60'
+                        } ${!isHost ? 'cursor-default opacity-85' : 'hover:border-slate-600'}`}
+                      >
+                        <div>
+                          <div className="text-sm font-bold text-white">{t.name}</div>
+                          <div className="text-xs text-slate-400">{t.subtitle}</div>
+                        </div>
+                        <span className="text-xs font-bold" style={{ color: t.accentColor }}>
+                          {t.difficulty}
+                        </span>
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="mb-1 block text-xs font-bold text-slate-400 uppercase">
-                    Mode
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Laps
                   </label>
                   <select
-                    disabled={!isHost || busy}
-                    value={room.mode}
-                    onChange={(e) => void onUpdateSettings({ mode: e.target.value as GameMode })}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-70"
+                    disabled={!isHost}
+                    value={room.laps}
+                    onChange={(e) => void onUpdateRoomSettings({ laps: Number(e.target.value) })}
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
                   >
-                    <option value="pvp_royale">PvP Free-For-All</option>
-                    <option value="coop_squad">Co-op Squad vs Bots</option>
+                    <option value={1}>1 Lap</option>
+                    <option value={2}>2 Laps</option>
+                    <option value={3}>3 Laps</option>
+                    <option value={5}>5 Laps</option>
                   </select>
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-bold text-slate-400 uppercase">
-                    AI Rivals ({room.bot_count})
+                  <label className="mb-1 block text-xs font-semibold uppercase tracking-wider text-slate-400">
+                    Max Players
                   </label>
                   <select
-                    disabled={!isHost || busy}
-                    value={room.bot_count}
-                    onChange={(e) => void onUpdateSettings({ botCount: Number(e.target.value) })}
-                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-xs font-bold text-white disabled:opacity-70"
+                    disabled={!isHost}
+                    value={room.max_players}
+                    onChange={(e) =>
+                      void onUpdateRoomSettings({ max_players: Number(e.target.value) })
+                    }
+                    className="w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-2 text-sm font-semibold text-white disabled:opacity-70"
                   >
-                    {[0, 3, 6, 8, 10, 12].map((b) => (
-                      <option key={b} value={b}>
-                        {b} Bots
-                      </option>
-                    ))}
+                    <option value={2}>2 Players</option>
+                    <option value={3}>3 Players</option>
+                    <option value={4}>4 Players</option>
                   </select>
                 </div>
               </div>
+
+              <label className="flex items-center justify-between rounded-xl border border-slate-800 bg-slate-950/60 px-3.5 py-2.5">
+                <span className="text-sm font-semibold text-slate-200">Fill empty seats with AI</span>
+                <input
+                  type="checkbox"
+                  disabled={!isHost}
+                  checked={room.ai_fill}
+                  onChange={(e) => void onUpdateRoomSettings({ ai_fill: e.target.checked })}
+                  className="h-4 w-4 accent-cyan-400"
+                />
+              </label>
             </div>
 
-            <div className="space-y-3 pt-2">
-              {!isHost ? (
-                <button
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void onToggleReady()}
-                  className={`w-full rounded-2xl px-5 py-3.5 text-sm font-black uppercase transition ${
-                    localPlayer?.is_ready
-                      ? 'bg-emerald-500 text-slate-950'
-                      : 'bg-amber-500 text-slate-950 hover:brightness-110'
-                  }`}
-                >
-                  {localPlayer?.is_ready ? 'Ready! Waiting for Host' : 'Mark Ready'}
-                </button>
+            <div className="mt-6 space-y-3">
+              {isHost ? (
+                <>
+                  <div className="flex items-center gap-2 rounded-xl border border-slate-800 bg-slate-950/60 px-3.5 py-2 text-xs text-slate-300">
+                    <Sparkles className="h-4 w-4 text-amber-400" />
+                    <span>
+                      {nonHostTotal === 0
+                        ? 'You can start right now (with AI bots) or wait for friends to join.'
+                        : `${nonHostReadyCount}/${nonHostTotal} guest players ready.`}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => void onStartRace()}
+                    className="arcade-glow flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-cyan-500 px-5 py-3.5 text-base font-black uppercase tracking-wider text-slate-950 transition hover:brightness-110"
+                  >
+                    <Play className="h-5 w-5 fill-current" />
+                    Start Race!
+                  </button>
+                </>
               ) : (
                 <button
                   type="button"
-                  disabled={busy || !canLaunch}
-                  onClick={() => void onStartMatch()}
-                  className="royale-glow w-full rounded-2xl bg-gradient-to-r from-amber-400 via-orange-400 to-rose-400 px-5 py-4 text-sm font-black tracking-wide text-slate-950 uppercase transition hover:brightness-110 disabled:opacity-45"
+                  onClick={() => void onToggleReady()}
+                  className={`flex w-full items-center justify-center gap-2 rounded-xl px-5 py-3.5 text-base font-black uppercase tracking-wider transition ${
+                    localPlayer?.is_ready
+                      ? 'bg-emerald-500 text-slate-950 hover:bg-emerald-400'
+                      : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400'
+                  }`}
                 >
-                  {!allReady
-                    ? 'Waiting for All Players to Ready Up...'
-                    : sortedPlayers.length < 2 && room.bot_count === 0
-                      ? 'Need 2+ Humans or 1+ Bot to Launch'
-                      : `Deploy Match (${sortedPlayers.length + room.bot_count} Combatants)`}
+                  <Check className="h-5 w-5" />
+                  {localPlayer?.is_ready ? 'Ready! (Waiting for Host)' : 'Mark Ready'}
                 </button>
               )}
             </div>
-          </div>
+          </section>
         </div>
       </div>
     </div>

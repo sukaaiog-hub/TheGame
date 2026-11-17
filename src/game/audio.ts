@@ -1,249 +1,138 @@
-import type { WeaponId } from './types';
-
-export class BattleSoundEngine {
+export class SoundEngine {
   private ctx: AudioContext | null = null;
+  private engineOsc: OscillatorNode | null = null;
+  private engineGain: GainNode | null = null;
   private muted = false;
-  private noiseBuffer: AudioBuffer | null = null;
 
-  public unlock(): void {
-    if (typeof window === 'undefined') return;
-    if (!this.ctx) {
-      const AC =
-        window.AudioContext ||
-        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-      if (!AC) return;
-      this.ctx = new AC();
-      this.buildNoiseBuffer();
-    }
-    if (this.ctx.state === 'suspended') {
-      void this.ctx.resume();
-    }
-  }
-
-  private buildNoiseBuffer(): void {
-    if (!this.ctx) return;
-    const len = this.ctx.sampleRate * 0.8;
-    const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
-    const data = buf.getChannelData(0);
-    for (let i = 0; i < len; i++) {
-      data[i] = Math.random() * 2 - 1;
-    }
-    this.noiseBuffer = buf;
+  public isMuted(): boolean {
+    return this.muted;
   }
 
   public setMuted(muted: boolean): void {
     this.muted = muted;
+    if (this.engineGain && this.ctx) {
+      this.engineGain.gain.setTargetAtTime(muted ? 0 : 0.03, this.ctx.currentTime, 0.05);
+    }
   }
 
-  public playWeaponShot(weaponId: WeaponId, distanceAttenuation: number = 1.0): void {
-    if (this.muted || !this.ctx || !this.noiseBuffer || distanceAttenuation <= 0.05) return;
-    const now = this.ctx.currentTime;
-    const vol = Math.min(1, distanceAttenuation);
+  public unlock(): void {
+    if (typeof window === 'undefined') return;
+    if (!this.ctx) {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      this.ctx = new AudioCtx();
+    }
+    if (this.ctx.state === 'suspended') {
+      void this.ctx.resume();
+    }
+    if (!this.engineOsc && this.ctx) {
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      const filter = this.ctx.createBiquadFilter();
 
-    // Filtered noise transient
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
+      osc.type = 'sawtooth';
+      osc.frequency.value = 65;
 
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = weaponId === 'shotgun' ? 'lowpass' : 'bandpass';
-    filter.frequency.setValueAtTime(
-      weaponId === 'shotgun'
-        ? 1100
-        : weaponId === 'sniper'
-          ? 2400
-          : weaponId === 'smg'
-            ? 2800
-            : weaponId === 'plasma'
-              ? 3600
-              : 1850,
-      now
-    );
+      filter.type = 'lowpass';
+      filter.frequency.value = 260;
 
-    const nGain = this.ctx.createGain();
-    const dur =
-      weaponId === 'shotgun'
-        ? 0.24
-        : weaponId === 'sniper'
-          ? 0.3
-          : weaponId === 'smg'
-            ? 0.08
-            : 0.13;
-    const peak = (weaponId === 'shotgun' || weaponId === 'sniper' ? 0.26 : 0.16) * vol;
-    nGain.gain.setValueAtTime(peak, now);
-    nGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+      gain.gain.value = 0;
 
-    noise.connect(filter);
-    filter.connect(nGain);
-    nGain.connect(this.ctx.destination);
-    noise.start(now);
-    noise.stop(now + dur);
+      osc.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+      osc.start();
 
-    // Punchy low/mid body oscillator
-    const osc = this.ctx.createOscillator();
-    const oGain = this.ctx.createGain();
-    osc.type = weaponId === 'plasma' ? 'sine' : 'triangle';
-    const startFreq =
-      weaponId === 'plasma'
-        ? 920
-        : weaponId === 'sniper'
-          ? 340
-          : weaponId === 'shotgun'
-            ? 190
-            : 260;
-    osc.frequency.setValueAtTime(startFreq, now);
-    osc.frequency.exponentialRampToValueAtTime(weaponId === 'plasma' ? 240 : 48, now + dur * 0.75);
-    oGain.gain.setValueAtTime(peak * 0.85, now);
-    oGain.gain.exponentialRampToValueAtTime(0.001, now + dur * 0.8);
-
-    osc.connect(oGain);
-    oGain.connect(this.ctx.destination);
-    osc.start(now);
-    osc.stop(now + dur * 0.85);
+      this.engineOsc = osc;
+      this.engineGain = gain;
+    }
   }
 
-  public playHitmarker(armorHit: boolean): void {
+  public updateEngine(speed: number, maxSpeed: number, boosting: boolean, active: boolean): void {
+    if (!this.ctx || !this.engineOsc || !this.engineGain) return;
+    if (this.muted || !active) {
+      this.engineGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.06);
+      return;
+    }
+    const ratio = Math.min(1.5, Math.abs(speed) / Math.max(1, maxSpeed));
+    const targetFreq = 58 + ratio * 115 + (boosting ? 42 : 0);
+    const targetGain = 0.025 + Math.min(0.045, ratio * 0.035);
+    this.engineOsc.frequency.setTargetAtTime(targetFreq, this.ctx.currentTime, 0.05);
+    this.engineGain.gain.setTargetAtTime(targetGain, this.ctx.currentTime, 0.06);
+  }
+
+  private playTone(freq: number, duration: number, type: OscillatorType = 'triangle', volume = 0.12, endFreq?: number): void {
     if (this.muted || !this.ctx) return;
     const now = this.ctx.currentTime;
     const osc = this.ctx.createOscillator();
     const gain = this.ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(armorHit ? 1450 : 980, now);
-    osc.frequency.exponentialRampToValueAtTime(armorHit ? 2100 : 540, now + 0.065);
-    gain.gain.setValueAtTime(0.11, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.07);
+
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, now);
+    if (endFreq !== undefined) {
+      osc.frequency.exponentialRampToValueAtTime(Math.max(20, endFreq), now + duration);
+    }
+
+    gain.gain.setValueAtTime(volume, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
+
     osc.connect(gain);
     gain.connect(this.ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.075);
+    osc.stop(now + duration);
   }
 
-  public playCrateBreak(): void {
-    if (this.muted || !this.ctx || !this.noiseBuffer) return;
-    const now = this.ctx.currentTime;
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(950, now);
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.22, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.23);
+  public playCountdownBeep(isGo: boolean): void {
+    this.unlock();
+    if (isGo) {
+      this.playTone(880, 0.38, 'square', 0.14, 1174);
+    } else {
+      this.playTone(440, 0.18, 'triangle', 0.12);
+    }
   }
 
-  public playPickup(): void {
-    if (this.muted || !this.ctx) return;
-    const now = this.ctx.currentTime;
-    [523.25, 783.99].forEach((freq, i) => {
-      const osc = this.ctx!.createOscillator();
-      const gain = this.ctx!.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(freq, now + i * 0.055);
-      gain.gain.setValueAtTime(0.09, now + i * 0.055);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.055 + 0.12);
-      osc.connect(gain);
-      gain.connect(this.ctx!.destination);
-      osc.start(now + i * 0.055);
-      osc.stop(now + i * 0.055 + 0.13);
-    });
+  public playBoost(): void {
+    this.playTone(220, 0.34, 'sawtooth', 0.11, 740);
   }
 
-  public playExplosion(distanceAttenuation: number = 1.0): void {
-    if (this.muted || !this.ctx || !this.noiseBuffer || distanceAttenuation <= 0.05) return;
-    const now = this.ctx.currentTime;
-    const vol = Math.min(1, distanceAttenuation);
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(520, now);
-    filter.frequency.exponentialRampToValueAtTime(85, now + 0.55);
-
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.38 * vol, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.62);
-
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.65);
+  public playItemPickup(): void {
+    this.playTone(523, 0.09, 'sine', 0.11);
+    setTimeout(() => this.playTone(659, 0.12, 'sine', 0.11), 65);
+    setTimeout(() => this.playTone(784, 0.16, 'sine', 0.12), 130);
   }
 
-  public playDash(): void {
-    if (this.muted || !this.ctx || !this.noiseBuffer) return;
-    const now = this.ctx.currentTime;
-    const noise = this.ctx.createBufferSource();
-    noise.buffer = this.noiseBuffer;
-    const filter = this.ctx.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(750, now);
-    filter.frequency.exponentialRampToValueAtTime(2200, now + 0.15);
-    const gain = this.ctx.createGain();
-    gain.gain.setValueAtTime(0.11, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.16);
-    noise.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ctx.destination);
-    noise.start(now);
-    noise.stop(now + 0.17);
+  public playProjectileFire(): void {
+    this.playTone(380, 0.16, 'square', 0.1, 140);
   }
 
-  public playCountdown(isGo: boolean): void {
-    if (this.muted || !this.ctx) return;
-    const now = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    osc.type = 'triangle';
-    osc.frequency.setValueAtTime(isGo ? 880 : 440, now);
-    gain.gain.setValueAtTime(0.14, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + (isGo ? 0.35 : 0.14));
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    osc.start(now);
-    osc.stop(now + (isGo ? 0.36 : 0.15));
+  public playHit(blocked: boolean): void {
+    if (blocked) {
+      this.playTone(620, 0.22, 'sine', 0.14, 920);
+    } else {
+      this.playTone(170, 0.35, 'sawtooth', 0.15, 55);
+    }
   }
 
-  public playElimination(victory: boolean): void {
-    if (this.muted || !this.ctx) return;
-    const now = this.ctx.currentTime;
-    const notes = victory ? [523.25, 659.25, 783.99, 1046.5] : [392, 311.13, 220];
-    notes.forEach((f, idx) => {
-      const osc = this.ctx!.createOscillator();
-      const gain = this.ctx!.createGain();
-      osc.type = 'triangle';
-      osc.frequency.setValueAtTime(f, now + idx * 0.11);
-      gain.gain.setValueAtTime(0.14, now + idx * 0.11);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.11 + 0.3);
-      osc.connect(gain);
-      gain.connect(this.ctx!.destination);
-      osc.start(now + idx * 0.11);
-      osc.stop(now + idx * 0.11 + 0.32);
-    });
-  }
-
-  public playAirdropChime(): void {
-    if (this.muted || !this.ctx) return;
-    const now = this.ctx.currentTime;
-    [587.33, 880, 1174.66].forEach((f, idx) => {
-      const osc = this.ctx!.createOscillator();
-      const gain = this.ctx!.createGain();
-      osc.type = 'sine';
-      osc.frequency.setValueAtTime(f, now + idx * 0.09);
-      gain.gain.setValueAtTime(0.11, now + idx * 0.09);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + idx * 0.09 + 0.25);
-      osc.connect(gain);
-      gain.connect(this.ctx!.destination);
-      osc.start(now + idx * 0.09);
-      osc.stop(now + idx * 0.09 + 0.26);
-    });
+  public playLap(isFinalFinish: boolean): void {
+    if (isFinalFinish) {
+      [523, 659, 784, 1046].forEach((f, idx) => {
+        setTimeout(() => this.playTone(f, 0.25, 'triangle', 0.14), idx * 95);
+      });
+    } else {
+      this.playTone(587, 0.14, 'triangle', 0.12);
+      setTimeout(() => this.playTone(880, 0.22, 'triangle', 0.13), 110);
+    }
   }
 
   public dispose(): void {
+    if (this.engineOsc) {
+      try {
+        this.engineOsc.stop();
+      } catch {
+        // ignore
+      }
+      this.engineOsc = null;
+    }
     if (this.ctx) {
       void this.ctx.close();
       this.ctx = null;

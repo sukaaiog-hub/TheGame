@@ -1,5 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import type { OperatorId } from '@/game/types';
+import type { KartId } from '@/game/types';
 
 let browserClient: SupabaseClient | null = null;
 
@@ -19,39 +19,39 @@ export function getSupabaseClient(): SupabaseClient {
   browserClient = createClient(cfg.url, cfg.anonKey, {
     realtime: {
       params: {
-        eventsPerSecond: 35,
+        eventsPerSecond: 30,
       },
     },
   });
   return browserClient;
 }
 
-export interface AgentIdentity {
+export interface PlayerIdentity {
   playerId: string;
   nickname: string;
-  operatorId: OperatorId;
+  kartId: KartId;
 }
 
-const STORAGE_KEY = 'dropzone_royale_identity_v1';
+const STORAGE_KEY = 'tuxkart_rush_identity_v1';
 
-export function getOrCreateAgentIdentity(): AgentIdentity {
+export function getOrCreatePlayerIdentity(): PlayerIdentity {
   if (typeof window === 'undefined') {
-    return { playerId: 'ssr-agent', nickname: 'Agent-01', operatorId: 'vanguard' };
+    return { playerId: 'ssr-player', nickname: 'TuxRacer', kartId: 'tux' };
   }
   try {
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      const parsed = JSON.parse(raw) as Partial<AgentIdentity>;
+      const parsed = JSON.parse(raw) as Partial<PlayerIdentity>;
       if (parsed.playerId && parsed.nickname) {
         return {
           playerId: parsed.playerId,
           nickname: parsed.nickname,
-          operatorId: parsed.operatorId ?? 'vanguard',
+          kartId: parsed.kartId ?? 'tux',
         };
       }
     }
   } catch {
-    // ignore storage errors
+    // ignore storage parse issues
   }
 
   const uuid =
@@ -59,16 +59,16 @@ export function getOrCreateAgentIdentity(): AgentIdentity {
       ? crypto.randomUUID()
       : `p-${Math.random().toString(36).slice(2, 11)}-${Date.now()}`;
 
-  const identity: AgentIdentity = {
+  const identity: PlayerIdentity = {
     playerId: uuid,
-    nickname: `Agent-${uuid.slice(0, 4).toUpperCase()}`,
-    operatorId: 'vanguard',
+    nickname: `Racer-${uuid.slice(0, 4).toUpperCase()}`,
+    kartId: 'tux',
   };
-  saveAgentIdentity(identity);
+  savePlayerIdentity(identity);
   return identity;
 }
 
-export function saveAgentIdentity(identity: AgentIdentity): void {
+export function savePlayerIdentity(identity: PlayerIdentity): void {
   if (typeof window === 'undefined') return;
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(identity));
