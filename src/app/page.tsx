@@ -34,6 +34,15 @@ interface SoloRunConfig {
   startAtEpochMs: number;
 }
 
+function extractErrorMessage(err: unknown, fallback: string): string {
+  if (err instanceof Error && err.message) return err.message;
+  if (err && typeof err === 'object' && 'message' in err) {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === 'string' && msg.trim().length > 0) return msg;
+  }
+  return fallback;
+}
+
 export default function HomePage() {
   const [identity, setIdentity] = useState<AgentIdentity | null>(null);
   const [room, setRoom] = useState<BrRoom | null>(null);
@@ -50,6 +59,7 @@ export default function HomePage() {
   const autoJoinedCodeRef = useRef<string | null>(null);
   const resultSubmittedRef = useRef<string | null>(null);
   const roomStatusRef = useRef<string | null>(null);
+  const countdownSyncedForRoomRef = useRef<string | null>(null);
 
   roomStatusRef.current = room?.status ?? null;
 
@@ -58,25 +68,22 @@ export default function HomePage() {
     setIdentity(id);
   }, []);
 
-  const updateIdentity = useCallback(
-    (nickname: string, operatorId: OperatorId) => {
-      setIdentity((prev) => {
-        const next: AgentIdentity = {
-          playerId: prev?.playerId ?? getOrCreateAgentIdentity().playerId,
-          nickname,
-          operatorId,
-        };
-        saveAgentIdentity(next);
-        return next;
-      });
-    },
-    []
-  );
+  const updateIdentity = useCallback((nickname: string, operatorId: OperatorId) => {
+    setIdentity((prev) => {
+      const next: AgentIdentity = {
+        playerId: prev?.playerId ?? getOrCreateAgentIdentity().playerId,
+        nickname,
+        operatorId,
+      };
+      saveAgentIdentity(next);
+      return next;
+    });
+  }, []);
 
   const refreshRoomSnapshot = useCallback(async (roomId: string) => {
     try {
       const supabase = getSupabaseClient();
-      const [{ data: roomRow }, { data: playerRows }] = await Promise.all([
+      const [{ data: roomRow, error: rErr }, { data: playerRows, error: pErr }] = await Promise.all([
         supabase.from('br_rooms').select('*').eq('id', roomId).maybeSingle(),
         supabase
           .from('br_players')
@@ -85,7 +92,10 @@ export default function HomePage() {
           .order('seat_index', { ascending: true }),
       ]);
 
+      if (rErr || pErr) return;
+
       if (!roomRow) {
+        countdownSyncedForRoomRef.current = null;
         setRoom(null);
         setPlayers([]);
         return;
@@ -94,15 +104,20 @@ export default function HomePage() {
       const typedRoom = roomRow as BrRoom;
       setRoom((prev) => (shouldReplaceBrRoomState(prev, typedRoom) ? typedRoom : prev));
 
-      if (typedRoom.status === 'active' || typedRoom.status === 'countdown') {
-        if (typedRoom.started_at) {
+      if (typedRoom.status === 'waiting') {
+        countdownSyncedForRoomRef.current = null;
+        resultSubmittedRef.current = null;
+      } else if (typedRoom.status === 'active' || typedRoom.status === 'countdown') {
+        if (
+          typedRoom.started_at &&
+          countdownSyncedForRoomRef.current !== typedRoom.id
+        ) {
           const parsed = Date.parse(typedRoom.started_at);
           if (Number.isFinite(parsed)) {
-            setStartAtEpochMs((prev) =>
-              Math.abs(parsed - prev) > 250 && Math.abs(parsed - Date.now()) < 10_000
-                ? parsed
-                : prev
-            );
+            const safeStart =
+              Math.abs(parsed - Date.now()) < 10_000 ? parsed : Date.now() + 1800;
+            countdownSyncedForRoomRef.current = typedRoom.id;
+            setStartAtEpochMs(safeStart);
           }
         }
       }
@@ -114,7 +129,7 @@ export default function HomePage() {
         );
       }
     } catch {
-      // ignore transient network errors
+      // ignore transient network polling errors
     }
   }, []);
 
@@ -123,18 +138,19 @@ export default function HomePage() {
       if (msg.type === 'match_countdown') {
         const synced = computeSyncedStartAtEpochMs(msg.startAtEpochMs, msg.sentAtEpochMs);
         setStartAtEpochMs(synced);
-        setRoom((prev) =>
-          prev
-            ? {
-                ...prev,
-                status: 'active',
-                match_seed: msg.matchSeed,
-                started_at: new Date(synced).toISOString(),
-              }
-            : prev
-        );
+        setRoom((prev) => {
+          if (!prev) return prev;
+          countdownSyncedForRoomRef.current = prev.id;
+          return {
+            ...prev,
+            status: 'active',
+            match_seed: msg.matchSeed,
+            started_at: new Date(synced).toISOString(),
+          };
+        });
       } else if (msg.type === 'room_reset') {
         resultSubmittedRef.current = null;
+        countdownSyncedForRoomRef.current = null;
         if (room?.id) void refreshRoomSnapshot(room.id);
       }
       broadcastHandlerRef.current(msg);
@@ -154,7 +170,7 @@ export default function HomePage() {
       onBroadcast: (msg) => handleBroadcastRef.current(msg),
       onPresenceSync: (ids) => setOnlineIds(ids),
       onDbChange: () => {
-        if (roomStatusRef.current === 'waiting') {
+        if (roomStatusRef.current === 'waiting' || roomStatusRef.current === 'finished') {
           void refreshRoomSnapshot(room.id);
         }
       },
@@ -163,7 +179,7 @@ export default function HomePage() {
     setBroadcastTick((t) => t + 1);
 
     const pollId = setInterval(() => {
-      if (roomStatusRef.current === 'waiting') {
+      if (roomStatusRef.current === 'waiting' || roomStatusRef.current === 'finished') {
         void refreshRoomSnapshot(room.id);
       }
     }, 3500);
@@ -189,21 +205,26 @@ export default function HomePage() {
       try {
         const supabase = getSupabaseClient();
         const { data, error } = await supabase.rpc('create_br_room', {
+          p_name: opts.roomName,
           p_host_id: identity.playerId,
-          p_host_nickname: identity.nickname,
+          p_nickname: identity.nickname,
           p_operator_id: identity.operatorId,
-          p_room_name: opts.roomName,
           p_map_id: opts.mapId,
           p_mode: opts.mode,
           p_max_players: opts.maxPlayers,
           p_bot_count: opts.botCount,
         });
         if (error) throw error;
-        const createdRoom = data as BrRoom;
+        const createdRoom = (Array.isArray(data) ? data[0] : data) as BrRoom | null;
+        if (!createdRoom?.id) {
+          throw new Error('Room creation returned empty response');
+        }
+        countdownSyncedForRoomRef.current = null;
+        resultSubmittedRef.current = null;
         setRoom(createdRoom);
         await refreshRoomSnapshot(createdRoom.id);
       } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : 'Failed to create room');
+        setErrorMessage(extractErrorMessage(err, 'Failed to create room'));
       } finally {
         setBusy(false);
       }
@@ -219,16 +240,22 @@ export default function HomePage() {
       try {
         const supabase = getSupabaseClient();
         const { data, error } = await supabase.rpc('join_br_room', {
-          p_code: code.trim().toUpperCase(),
+          p_room_code: code.trim().toUpperCase(),
           p_player_id: identity.playerId,
           p_nickname: identity.nickname,
           p_operator_id: identity.operatorId,
         });
         if (error) throw error;
-        const row = data as { room_id: string };
-        await refreshRoomSnapshot(row.room_id);
+        const payload = data as { room?: BrRoom; player?: BrPlayer } | null;
+        if (!payload?.room?.id) {
+          throw new Error('Could not find that room lobby');
+        }
+        countdownSyncedForRoomRef.current = null;
+        resultSubmittedRef.current = null;
+        setRoom(payload.room);
+        await refreshRoomSnapshot(payload.room.id);
       } catch (err) {
-        setErrorMessage(err instanceof Error ? err.message : 'Could not join room');
+        setErrorMessage(extractErrorMessage(err, 'Could not join room'));
       } finally {
         setBusy(false);
       }
@@ -253,13 +280,17 @@ export default function HomePage() {
     const me = players.find((p) => p.player_id === identity.playerId);
     if (!me) return;
     setBusy(true);
+    setErrorMessage(null);
     try {
       const supabase = getSupabaseClient();
-      await supabase
+      const { error } = await supabase
         .from('br_players')
         .update({ is_ready: !me.is_ready })
         .eq('id', me.id);
+      if (error) throw error;
       await refreshRoomSnapshot(room.id);
+    } catch (err) {
+      setErrorMessage(extractErrorMessage(err, 'Failed to update ready state'));
     } finally {
       setBusy(false);
     }
@@ -271,9 +302,17 @@ export default function HomePage() {
       updateIdentity(identity.nickname, operatorId);
       const me = players.find((p) => p.player_id === identity.playerId);
       if (!me) return;
-      const supabase = getSupabaseClient();
-      await supabase.from('br_players').update({ operator_id: operatorId }).eq('id', me.id);
-      await refreshRoomSnapshot(room.id);
+      try {
+        const supabase = getSupabaseClient();
+        const { error } = await supabase
+          .from('br_players')
+          .update({ operator_id: operatorId })
+          .eq('id', me.id);
+        if (error) throw error;
+        await refreshRoomSnapshot(room.id);
+      } catch (err) {
+        setErrorMessage(extractErrorMessage(err, 'Failed to switch operator'));
+      }
     },
     [room, identity, players, updateIdentity, refreshRoomSnapshot]
   );
@@ -281,16 +320,21 @@ export default function HomePage() {
   const handleUpdateSettings = useCallback(
     async (opts: { mapId?: MapId; mode?: GameMode; botCount?: number }) => {
       if (!room) return;
-      const supabase = getSupabaseClient();
-      await supabase
-        .from('br_rooms')
-        .update({
-          ...(opts.mapId ? { map_id: opts.mapId } : {}),
-          ...(opts.mode ? { mode: opts.mode } : {}),
-          ...(typeof opts.botCount === 'number' ? { bot_count: opts.botCount } : {}),
-        })
-        .eq('id', room.id);
-      await refreshRoomSnapshot(room.id);
+      try {
+        const supabase = getSupabaseClient();
+        const { error } = await supabase
+          .from('br_rooms')
+          .update({
+            ...(opts.mapId ? { map_id: opts.mapId } : {}),
+            ...(opts.mode ? { mode: opts.mode } : {}),
+            ...(typeof opts.botCount === 'number' ? { bot_count: opts.botCount } : {}),
+          })
+          .eq('id', room.id);
+        if (error) throw error;
+        await refreshRoomSnapshot(room.id);
+      } catch (err) {
+        setErrorMessage(extractErrorMessage(err, 'Failed to update match settings'));
+      }
     },
     [room, refreshRoomSnapshot]
   );
@@ -298,12 +342,13 @@ export default function HomePage() {
   const handleStartMatch = useCallback(async () => {
     if (!room) return;
     setBusy(true);
+    setErrorMessage(null);
     try {
       const nowEpoch = Date.now();
       const startEpoch = nowEpoch + 3200;
       const seed = Math.floor(Math.random() * 900_000_000) + 100_000;
       const supabase = getSupabaseClient();
-      await supabase
+      const { error } = await supabase
         .from('br_rooms')
         .update({
           status: 'active',
@@ -311,7 +356,9 @@ export default function HomePage() {
           started_at: new Date(startEpoch).toISOString(),
         })
         .eq('id', room.id);
+      if (error) throw error;
 
+      countdownSyncedForRoomRef.current = room.id;
       setStartAtEpochMs(startEpoch);
       resultSubmittedRef.current = null;
       channelRef.current?.send({
@@ -321,6 +368,8 @@ export default function HomePage() {
         matchSeed: seed,
       });
       await refreshRoomSnapshot(room.id);
+    } catch (err) {
+      setErrorMessage(extractErrorMessage(err, 'Failed to launch match'));
     } finally {
       setBusy(false);
     }
@@ -344,8 +393,14 @@ export default function HomePage() {
         p_player_id: identity.playerId,
       });
     } catch {
-      // ignore
+      // ignore network error on leave
     } finally {
+      countdownSyncedForRoomRef.current = null;
+      resultSubmittedRef.current = null;
+      broadcastHandlerRef.current = () => {};
+      if (typeof window !== 'undefined' && window.location.search.includes('room=')) {
+        window.history.replaceState({}, '', window.location.pathname);
+      }
       setRoom(null);
       setPlayers([]);
       setBusy(false);
@@ -354,6 +409,7 @@ export default function HomePage() {
 
   const handleStartSolo = useCallback((mapId: MapId, botCount: number) => {
     resultSubmittedRef.current = null;
+    setErrorMessage(null);
     setSoloRun({
       id: `solo-${Date.now()}`,
       mapId,
@@ -416,12 +472,24 @@ export default function HomePage() {
       return;
     }
     if (!room || !identity) return;
-    if (room.host_id === identity.playerId) {
-      const supabase = getSupabaseClient();
-      await supabase.rpc('reset_br_room', { p_room_id: room.id });
-      channelRef.current?.send({ type: 'room_reset' });
+    try {
+      if (room.host_id === identity.playerId) {
+        const supabase = getSupabaseClient();
+        const { data, error } = await supabase.rpc('reset_br_room', {
+          p_room_id: room.id,
+          p_player_id: identity.playerId,
+        });
+        if (error) throw error;
+        countdownSyncedForRoomRef.current = null;
+        resultSubmittedRef.current = null;
+        const resetRoom = (Array.isArray(data) ? data[0] : data) as BrRoom | null;
+        if (resetRoom?.id) setRoom(resetRoom);
+        channelRef.current?.send({ type: 'room_reset' });
+      }
+      await refreshRoomSnapshot(room.id);
+    } catch (err) {
+      setErrorMessage(extractErrorMessage(err, 'Failed to reset squad lobby'));
     }
-    await refreshRoomSnapshot(room.id);
   }, [soloRun, handleStartSolo, room, identity, refreshRoomSnapshot]);
 
   const registerBroadcastHandler = useCallback((fn: (msg: BrBroadcast) => void) => {
@@ -522,6 +590,7 @@ export default function HomePage() {
         onStartMatch={handleStartMatch}
         onLeaveRoom={handleLeaveRoom}
         busy={busy}
+        errorMessage={errorMessage}
       />
     );
   }

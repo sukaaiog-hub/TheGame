@@ -254,7 +254,12 @@ const worldCache = new Map<string, BuiltWorld>();
 export function buildWorldFromSeed(mapId: MapId, seed: number): BuiltWorld {
   const key = `${mapId}:${seed}`;
   const cached = worldCache.get(key);
-  if (cached) return cached;
+  if (cached) {
+    return {
+      ...cached,
+      crates: cached.crates.map((c) => ({ ...c })),
+    };
+  }
 
   const def = MAPS[mapId] ?? MAPS.verdan_valley;
   const rng = mulberry32(seed || 1337);
@@ -444,7 +449,10 @@ export function buildWorldFromSeed(mapId: MapId, seed: number): BuiltWorld {
   }
 
   const world: BuiltWorld = { def, seed, walls, buildings, roads, trees, crates };
-  worldCache.set(key, world);
+  worldCache.set(key, {
+    ...world,
+    crates: world.crates.map((c) => ({ ...c })),
+  });
   return world;
 }
 

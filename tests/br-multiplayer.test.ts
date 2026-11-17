@@ -132,4 +132,24 @@ describe('Battle Royale Multiplayer Sync & Roster', () => {
     expect(standings[1].playerId).toBe(p2.id);
     expect(standings[2].playerId).toBe(p3.id);
   });
+
+  it('returns fresh unmutated crates when buildWorldFromSeed reuses cached geometry', () => {
+    const w1 = buildWorldFromSeed('verdan_valley', 88888);
+    const originalCount = w1.crates.length;
+    w1.crates[0].opened = true;
+    w1.crates.push({
+      id: 'extra-airdrop',
+      x: 1400,
+      y: 1400,
+      kind: 'supply_drop',
+      hp: 150,
+      maxHp: 150,
+      opened: false,
+      hitFlashUntilMs: 0,
+    });
+
+    const w2 = buildWorldFromSeed('verdan_valley', 88888);
+    expect(w2.crates).toHaveLength(originalCount);
+    expect(w2.crates[0].opened).toBe(false);
+  });
 });

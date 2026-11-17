@@ -16,6 +16,7 @@ interface WaitingRoomProps {
   onStartMatch: () => Promise<void>;
   onLeaveRoom: () => Promise<void>;
   busy: boolean;
+  errorMessage?: string | null;
 }
 
 export default function WaitingRoom({
@@ -29,6 +30,7 @@ export default function WaitingRoom({
   onStartMatch,
   onLeaveRoom,
   busy,
+  errorMessage,
 }: WaitingRoomProps) {
   const [copied, setCopied] = useState(false);
 
@@ -89,6 +91,12 @@ export default function WaitingRoom({
             </button>
           </div>
         </div>
+
+        {errorMessage && (
+          <div className="rounded-2xl border border-rose-500/50 bg-rose-950/60 px-4 py-3 text-sm font-semibold text-rose-200">
+            {errorMessage}
+          </div>
+        )}
 
         {/* Squad Roster + Settings */}
         <div className="grid gap-6 lg:grid-cols-12">

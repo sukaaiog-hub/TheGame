@@ -839,6 +839,17 @@ export default function ArenaView({
                   });
                 }
               }
+
+              if (aiIn.throwGrenade) {
+                const g = tryThrowGrenade(f, nowMs);
+                if (g) {
+                  grenades.push(g);
+                  channelRef.current?.send({
+                    type: 'throw_grenade',
+                    grenade: g,
+                  });
+                }
+              }
             } else {
               extrapolateRemoteFighter(f, dt);
             }
@@ -1001,7 +1012,12 @@ export default function ArenaView({
       }
 
       // Update casings & particles
-      for (const c of casings) {
+      for (let i = casings.length - 1; i >= 0; i--) {
+        const c = casings[i];
+        if (nowMs - c.bornAtMs > 6000) {
+          casings.splice(i, 1);
+          continue;
+        }
         c.x += c.vx * dt;
         c.y += c.vy * dt;
         c.vx *= Math.pow(0.03, dt);
@@ -1009,18 +1025,23 @@ export default function ArenaView({
         c.angle += c.spin * dt;
         c.spin *= Math.pow(0.05, dt);
       }
-      while (particles.length > 0 && nowMs - particles[0].bornAtMs > particles[0].lifeMs) {
-        particles.shift();
-      }
-      for (const p of particles) {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        const p = particles[i];
+        if (nowMs - p.bornAtMs > p.lifeMs) {
+          particles.splice(i, 1);
+          continue;
+        }
         p.x += p.vx * dt;
         p.y += p.vy * dt;
         p.vx *= Math.pow(0.15, dt);
         p.vy *= Math.pow(0.15, dt);
       }
-      while (floats.length > 0 && nowMs - floats[0].bornAtMs > 900) floats.shift();
-      while (casings.length > 0 && nowMs - casings[0].bornAtMs > 6000) casings.shift();
-      while (scorches.length > 0 && nowMs - scorches[0].bornAtMs > 15000) scorches.shift();
+      for (let i = floats.length - 1; i >= 0; i--) {
+        if (nowMs - floats[i].bornAtMs > 900) floats.splice(i, 1);
+      }
+      for (let i = scorches.length - 1; i >= 0; i--) {
+        if (nowMs - scorches[i].bornAtMs > 15000) scorches.splice(i, 1);
+      }
 
       // 5. Check Victory Condition (only 1 team or 1 fighter left)
       const aliveFighters = fighters.filter((f) => f.alive);
@@ -1628,7 +1649,11 @@ export default function ArenaView({
                 onClick={() => void onPlayAgain()}
                 className="rounded-2xl bg-gradient-to-r from-amber-400 to-orange-500 px-6 py-3 text-sm font-black text-slate-950 uppercase transition hover:brightness-110"
               >
-                {isSolo ? 'Drop Again' : 'Back to Squad Lobby'}
+                {isSolo
+                  ? 'Drop Again'
+                  : room.host_id === localPlayerId
+                    ? 'Back to Squad Lobby'
+                    : 'Check Lobby Reset'}
               </button>
               <button
                 type="button"
@@ -1638,6 +1663,11 @@ export default function ArenaView({
                 Main Menu
               </button>
             </div>
+            {!isSolo && room.host_id !== localPlayerId && (
+              <p className="mt-2.5 text-center text-[11px] text-slate-400">
+                Waiting for the host to reset the squad lobby, or click Main Menu to leave.
+              </p>
+            )}
           </div>
         </div>
       )}
