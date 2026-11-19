@@ -10,14 +10,14 @@
     "test": "node tests/verify.js && npx vitest run"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.82.0",
-    "three": "^0.181.2"
+    "@supabase/supabase-js": "^2.119.1",
+    "three": "^0.187.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.12",
-    "vitest": "^4.0.10"
+    "esbuild": "^0.28.2",
+    "vitest": "^5.1.1"
   }
 }
