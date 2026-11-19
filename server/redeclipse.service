@@ -1,0 +1,27 @@
+[Unit]
+Description=Red Eclipse 2 dedicated server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=rede
+Group=rede
+WorkingDirectory=/opt/redeclipse
+# -h points at the config dir containing servinit.cfg
+# -p sets the base port; game uses p and p+1 (UDP)
+ExecStart=/opt/redeclipse/redeclipse_server_linux -h/home/rede/.redeclipse -p28800
+Restart=always
+RestartSec=5
+LimitNOFILE=4096
+StandardOutput=journal
+StandardError=journal
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/rede/.redeclipse /opt/redeclipse
+
+[Install]
+WantedBy=multi-user.target

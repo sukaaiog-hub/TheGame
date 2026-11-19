@@ -1,0 +1,12 @@
+{
+  "name": "redeclipse-deploy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Red Eclipse 2 multiplayer deployment: status API, agent, Supabase stats",
+  "scripts": {
+    "agent": "node status-agent/agent.js",
+    "status": "node status-agent/query.js",
+    "test": "node tests/verify.js"
+  },
+  "engines": { "node": ">=18" }
+}

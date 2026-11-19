@@ -1,0 +1,39 @@
+name: build-server
+
+on:
+  push:
+    branches: [main, 'arena/**']
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deploy repo
+        uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config zlib1g-dev libsqlite3-dev
+
+      - name: Clone engine source (v2.0.0)
+        run: |
+          git clone --depth 1 --branch v2.0.0 \
+            https://github.com/redeclipse/base.git base
+
+      - name: Build dedicated server
+        run: make -j$(nproc) server
+        working-directory: base/src
+
+      - name: Verify binary
+        run: |
+          ls -la base/src/redeclipse_server_linux
+          file base/src/redeclipse_server_linux
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: redeclipse-server
+          path: base/src/redeclipse_server_linux
+          retention-days: 30
