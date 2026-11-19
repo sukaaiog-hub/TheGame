@@ -2,11 +2,22 @@
   "name": "redeclipse-deploy",
   "version": "1.0.0",
   "private": true,
-  "description": "Red Eclipse 2 multiplayer deployment: status API, agent, Supabase stats",
+  "description": "Red Eclipse 2 browser-playable WebGL arena, Supabase stats/realtime multiplayer, and VPS status API",
   "scripts": {
+    "build": "node scripts/build.mjs",
     "agent": "node status-agent/agent.js",
     "status": "node status-agent/query.js",
-    "test": "node tests/verify.js"
+    "test": "node tests/verify.js && npx vitest run"
   },
-  "engines": { "node": ">=18" }
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.82.0",
+    "three": "^0.181.2"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12",
+    "vitest": "^4.0.10"
+  }
 }

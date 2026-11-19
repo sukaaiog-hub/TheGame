@@ -37,3 +37,21 @@ jobs:
           name: redeclipse-server
           path: base/src/redeclipse_server_linux
           retention-days: 30
+
+  web-client:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout deploy repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install & verify browser arena + API handlers
+        run: |
+          npm ci
+          npm run build
+          npm test

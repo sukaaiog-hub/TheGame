@@ -1,691 +1,515 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Red Eclipse 2 — Server Portal &amp; Leaderboard</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Red Eclipse 2 — Play in Browser (Zero Download)</title>
   <style>
     :root {
-      --bg: #0b0d12;
-      --bg-elev: #121620;
-      --bg-card: #161b27;
-      --border: #242c3d;
-      --text: #e7ebf4;
-      --muted: #8b95ab;
+      --bg: #080c15;
+      --surface: #111827;
+      --surface-2: #172033;
+      --border: #243047;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
       --accent: #ef4444;
-      --accent-soft: rgba(239, 68, 68, 0.14);
-      --green: #22c55e;
-      --green-soft: rgba(34, 197, 94, 0.14);
-      --amber: #f59e0b;
-      --amber-soft: rgba(245, 158, 11, 0.14);
-      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-      --sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      --accent-2: #38bdf8;
+      --ok: #22c55e;
+      --warn: #f59e0b;
+      --bad: #ef4444;
     }
-
     * { box-sizing: border-box; }
-    body {
+    html, body {
       margin: 0;
-      font-family: var(--sans);
-      background: radial-gradient(circle at top right, rgba(239, 68, 68, 0.12), transparent 36%), var(--bg);
+      padding: 0;
+      background: radial-gradient(circle at 20% 0%, #1a1025 0%, var(--bg) 55%);
       color: var(--text);
-      line-height: 1.5;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
       min-height: 100vh;
     }
-
-    .wrap {
-      max-width: 1040px;
-      margin: 0 auto;
-      padding: 28px 20px 56px;
+    a { color: #fca5a5; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { max-width: 1120px; margin: 0 auto; padding: 24px 18px 48px; }
+    .hero {
+      display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center;
+      gap: 16px; border-bottom: 1px solid var(--border); padding-bottom: 18px; margin-bottom: 20px;
     }
-
-    header {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 16px;
-      padding-bottom: 22px;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 26px;
-    }
-
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 14px;
-    }
-
-    .emblem {
-      width: 44px;
-      height: 44px;
-      border-radius: 10px;
+    .brand { display: flex; align-items: center; gap: 14px; }
+    .badge {
+      width: 48px; height: 48px; border-radius: 12px;
       background: linear-gradient(135deg, #ef4444, #991b1b);
-      display: grid;
-      place-items: center;
-      font-weight: 800;
-      letter-spacing: -0.04em;
-      font-size: 18px;
-      color: #fff;
-      box-shadow: 0 8px 24px rgba(239, 68, 68, 0.25);
+      display: grid; place-items: center; font-weight: 900; font-size: 1.25rem;
+      box-shadow: 0 8px 24px rgba(239, 68, 68, 0.35);
+    }
+    h1 { margin: 0; font-size: 1.55rem; letter-spacing: -0.02em; }
+    .subtitle { margin: 4px 0 0; color: var(--muted); font-size: 0.92rem; }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px;
+      border-radius: 999px; font-size: 0.78rem; font-weight: 700;
+      background: #1e293b; border: 1px solid var(--border);
+    }
+    .pill.ok { color: var(--ok); border-color: rgba(34,197,94,0.4); background: rgba(34,197,94,0.1); }
+    .pill.warn { color: var(--warn); border-color: rgba(245,158,11,0.4); background: rgba(245,158,11,0.1); }
+    .pill.bad { color: var(--bad); border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.1); }
+
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 18px; }
+    .tab-btn {
+      background: var(--surface); color: var(--muted); border: 1px solid var(--border);
+      padding: 9px 16px; border-radius: 8px; font-weight: 700; font-size: 0.9rem; cursor: pointer;
+    }
+    .tab-btn.active {
+      background: rgba(239, 68, 68, 0.16); color: #fff; border-color: var(--accent);
     }
 
-    h1 {
-      margin: 0;
-      font-size: 1.45rem;
-      letter-spacing: -0.02em;
-    }
-
-    .subtitle {
-      font-size: 0.875rem;
-      color: var(--muted);
-    }
-
-    .actions {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-    }
-
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 8px;
-      padding: 10px 16px;
-      border-radius: 8px;
-      border: 1px solid var(--border);
-      background: var(--bg-card);
-      color: var(--text);
-      font-size: 0.9rem;
-      font-weight: 600;
-      text-decoration: none;
-      cursor: pointer;
-      transition: border-color 0.15s, background 0.15s, transform 0.1s;
-    }
-
-    .btn:hover { border-color: #3a4763; background: #1d2434; }
-    .btn:active { transform: translateY(1px); }
-
-    .btn-primary {
-      background: var(--accent);
-      border-color: var(--accent);
-      color: #fff;
-    }
-
-    .btn-primary:hover {
-      background: #dc2626;
-      border-color: #dc2626;
-    }
-
-    .btn-disabled,
-    .btn[aria-disabled="true"] {
-      opacity: 0.45;
-      pointer-events: none;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(12, 1fr);
-      gap: 18px;
-    }
+    .grid-2 { display: grid; grid-template-columns: 1.25fr 0.95fr; gap: 18px; }
+    @media (max-width: 860px) { .grid-2 { grid-template-columns: 1fr; } }
 
     .card {
-      background: var(--bg-card);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 20px;
+      background: rgba(17, 24, 39, 0.92); border: 1px solid var(--border);
+      border-radius: 14px; padding: 20px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+    }
+    .card h2 {
+      margin: 0 0 14px; font-size: 1.08rem;
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
     }
 
-    .span-7 { grid-column: span 7; }
-    .span-5 { grid-column: span 5; }
-    .span-12 { grid-column: span 12; }
+    .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    @media (max-width: 540px) { .form-grid { grid-template-columns: 1fr; } }
+    label.field { display: flex; flex-direction: column; gap: 5px; font-size: 0.82rem; color: var(--muted); }
+    input, select {
+      background: #0b1220; color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 9px 11px; font-size: 0.92rem; font-weight: 600;
+    }
+    input:focus, select:focus { outline: none; border-color: var(--accent-2); }
 
-    @media (max-width: 820px) {
-      .span-7, .span-5 { grid-column: span 12; }
+    .btn-play {
+      width: 100%; margin-top: 16px; padding: 14px 20px; border: 0; border-radius: 10px;
+      background: linear-gradient(135deg, #ef4444, #dc2626); color: #fff;
+      font-size: 1.05rem; font-weight: 800; letter-spacing: 0.02em; cursor: pointer;
+      box-shadow: 0 8px 24px rgba(239, 68, 68, 0.4);
+      transition: transform 0.12s ease, filter 0.12s ease;
+    }
+    .btn-play:hover { transform: translateY(-1px); filter: brightness(1.08); }
+    .btn-sec {
+      padding: 9px 14px; border-radius: 8px; border: 1px solid var(--border);
+      background: var(--surface-2); color: var(--text); font-weight: 700; cursor: pointer;
+    }
+    .btn-sec:hover { border-color: var(--accent-2); }
+    .btn-join {
+      display: inline-block; padding: 10px 18px; border-radius: 8px;
+      background: var(--accent); color: #fff; font-weight: 700;
+    }
+    .btn-join[aria-disabled="true"] { opacity: 0.45; pointer-events: none; }
+
+    .room-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; align-items: center; }
+    .peer-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+    .peer-chip {
+      font-size: 0.78rem; padding: 3px 9px; border-radius: 999px;
+      background: rgba(56, 189, 248, 0.14); border: 1px solid rgba(56, 189, 248, 0.35); color: #bae6fd;
     }
 
-    .card-head {
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      margin-bottom: 16px;
+    .controls-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; font-size: 0.84rem;
+    }
+    .ctrl-item {
+      background: #0b1220; border: 1px solid var(--border); border-radius: 8px;
+      padding: 7px 10px; display: flex; justify-content: space-between; gap: 8px;
+    }
+    .ctrl-item kbd {
+      background: #1e293b; color: #f8fafc; padding: 2px 6px; border-radius: 4px;
+      font-size: 0.76rem; font-weight: 700;
     }
 
-    .card-title {
-      margin: 0;
-      font-size: 1rem;
-      font-weight: 700;
-      letter-spacing: 0.01em;
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    th, td { padding: 9px 6px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { color: var(--muted); font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.04em; }
+    .muted { color: var(--muted); }
+    .badge-map {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      background: #1e293b; font-size: 0.8rem; font-weight: 700; text-transform: uppercase;
+    }
+    .kv { display: grid; grid-template-columns: 130px 1fr; gap: 6px; font-size: 0.9rem; margin-bottom: 12px; }
+    .kv .k { color: var(--muted); }
+    pre {
+      background: #0b1220; border: 1px solid var(--border); border-radius: 8px;
+      padding: 10px; font-size: 0.82rem; overflow-x: auto; color: #cbd5e1;
     }
 
-    .pill {
-      display: inline-flex;
-      align-items: center;
-      gap: 7px;
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.03em;
-      text-transform: uppercase;
-      border: 1px solid transparent;
+    /* Fullscreen WebGL Arena Overlay */
+    #arenaOverlay {
+      position: fixed; inset: 0; z-index: 1000; display: none; background: #000; overflow: hidden;
+      user-select: none;
+    }
+    #arenaCanvas { width: 100%; height: 100%; display: block; cursor: crosshair; }
+
+    #hudDamageFlash {
+      position: fixed; inset: 0; pointer-events: none; opacity: 0;
+      background: radial-gradient(circle, transparent 45%, rgba(239, 68, 68, 0.85) 100%);
+      transition: opacity 0.08s linear;
+    }
+    #hudScope {
+      position: fixed; inset: 0; pointer-events: none; display: none;
+      background: radial-gradient(circle, transparent 28%, rgba(4, 8, 18, 0.96) 36%);
+    }
+    #hudScope::before, #hudScope::after {
+      content: ""; position: fixed; background: rgba(184, 64, 255, 0.75);
+    }
+    #hudScope::before { left: 50%; top: 20%; width: 1px; height: 60%; transform: translateX(-50%); }
+    #hudScope::after { top: 50%; left: 20%; height: 1px; width: 60%; transform: translateY(-50%); }
+
+    #hudCrosshair {
+      position: fixed; left: 50%; top: 50%; width: 16px; height: 16px;
+      transform: translate(-50%, -50%); pointer-events: none;
+    }
+    #hudCrosshair::before, #hudCrosshair::after {
+      content: ""; position: absolute; background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+    }
+    #hudCrosshair::before { left: 7px; top: 0; width: 2px; height: 16px; }
+    #hudCrosshair::after { top: 7px; left: 0; width: 16px; height: 2px; }
+
+    #hudHitmarker {
+      position: fixed; left: 50%; top: 50%; width: 24px; height: 24px;
+      transform: translate(-50%, -50%) rotate(45deg); pointer-events: none; opacity: 0;
+    }
+    #hudHitmarker::before, #hudHitmarker::after {
+      content: ""; position: absolute; background: #fff;
+    }
+    #hudHitmarker.head::before, #hudHitmarker.head::after { background: #facc15; }
+    #hudHitmarker::before { left: 11px; top: 0; width: 2px; height: 24px; }
+    #hudHitmarker::after { top: 11px; left: 0; width: 24px; height: 2px; }
+
+    .hud-top {
+      position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 18px; align-items: center; pointer-events: none;
+      background: rgba(8, 12, 21, 0.75); border: 1px solid rgba(255,255,255,0.12);
+      padding: 8px 18px; border-radius: 10px; backdrop-filter: blur(6px);
+    }
+    .hud-stat { text-align: center; }
+    .hud-stat small { display: block; font-size: 0.68rem; color: var(--muted); text-transform: uppercase; }
+    .hud-stat strong { font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+
+    #hudKillfeed {
+      position: fixed; top: 16px; right: 16px; pointer-events: none;
+      display: flex; flex-direction: column; gap: 4px; align-items: flex-end;
+    }
+    .kf-row {
+      background: rgba(8, 12, 21, 0.78); padding: 4px 10px; border-radius: 6px;
+      font-size: 0.82rem; border-left: 3px solid var(--accent);
     }
 
-    .dot {
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: currentColor;
+    #hudTrick {
+      position: fixed; left: 50%; top: 34%; transform: translateX(-50%);
+      font-weight: 900; font-size: 1.1rem; letter-spacing: 0.08em; color: #38bdf8;
+      text-shadow: 0 2px 10px rgba(56, 189, 248, 0.65); pointer-events: none;
+      transition: opacity 0.15s ease; opacity: 0;
     }
 
-    .pill-online { color: var(--green); background: var(--green-soft); border-color: rgba(34, 197, 94, 0.35); }
-    .pill-offline { color: var(--accent); background: var(--accent-soft); border-color: rgba(239, 68, 68, 0.35); }
-    .pill-pending { color: var(--amber); background: var(--amber-soft); border-color: rgba(245, 158, 11, 0.35); }
-
-    .kv-grid {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 12px;
-      margin-bottom: 16px;
+    .hud-bottom-left {
+      position: fixed; left: 18px; bottom: 18px; width: 250px; pointer-events: none;
+      background: rgba(8, 12, 21, 0.78); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px; padding: 12px 14px;
     }
+    .bar-row { margin-bottom: 8px; }
+    .bar-row:last-child { margin-bottom: 0; }
+    .bar-lbl { display: flex; justify-content: space-between; font-size: 0.78rem; margin-bottom: 3px; font-weight: 700; }
+    .bar-track { height: 8px; border-radius: 999px; background: #1e293b; overflow: hidden; }
+    .bar-fill-hp { height: 100%; background: linear-gradient(90deg, #ef4444, #22c55e); transition: width 0.08s; }
+    .bar-fill-imp { height: 100%; background: linear-gradient(90deg, #0284c7, #38bdf8); transition: width 0.08s; }
 
-    .kv {
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
+    .hud-bottom-right {
+      position: fixed; right: 18px; bottom: 18px; text-align: right; pointer-events: none;
+      background: rgba(8, 12, 21, 0.78); border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 12px; padding: 12px 16px; min-width: 170px;
     }
+    #hudWeaponName { font-weight: 900; font-size: 1.05rem; letter-spacing: 0.05em; }
+    #hudAmmo { font-size: 1.45rem; font-weight: 800; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    #hudSpeed { font-size: 0.76rem; color: var(--muted); margin-top: 2px; }
 
-    .kv-label {
-      font-size: 0.75rem;
-      color: var(--muted);
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+    #hudWeaponBar {
+      position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+      display: flex; gap: 6px; pointer-events: none;
     }
-
-    .kv-value {
-      margin-top: 2px;
-      font-weight: 700;
-      font-size: 0.98rem;
-      word-break: break-word;
+    .wslot {
+      background: rgba(8, 12, 21, 0.8); border: 1px solid rgba(255,255,255,0.14);
+      border-radius: 8px; padding: 5px 9px; font-size: 0.74rem; text-align: center; min-width: 58px;
     }
+    .wslot span { display: block; color: var(--muted); font-size: 0.65rem; }
+    .wslot.active { background: rgba(30, 41, 59, 0.95); transform: translateY(-2px); }
 
-    .mono { font-family: var(--mono); }
-
-    .notice {
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-left: 3px solid var(--amber);
-      border-radius: 8px;
-      padding: 12px 14px;
-      font-size: 0.875rem;
-      color: var(--muted);
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(5, 8, 15, 0.78); backdrop-filter: blur(6px);
+      display: none; align-items: center; justify-content: center; z-index: 1020; padding: 16px;
     }
-
-    .notice strong { color: var(--text); }
-
-    .players-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin: 10px 0 0;
-      padding: 0;
-      list-style: none;
+    .modal-box {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+      padding: 22px; width: 100%; max-width: 480px; box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
     }
-
-    .player-chip {
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-radius: 6px;
-      padding: 4px 10px;
-      font-size: 0.84rem;
-      font-weight: 600;
-    }
-
-    .join-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      margin-top: 16px;
-      padding-top: 16px;
-      border-top: 1px solid var(--border);
-    }
-
-    .cmd-box {
-      flex: 1;
-      min-width: 220px;
-      background: var(--bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 9px 12px;
-      font-family: var(--mono);
-      font-size: 0.82rem;
-      color: var(--muted);
-      overflow-x: auto;
-      white-space: nowrap;
-    }
-
-    .steps {
-      margin: 0;
-      padding-left: 18px;
-      display: grid;
-      gap: 12px;
-      font-size: 0.9rem;
-      color: var(--muted);
-    }
-
-    .steps strong { color: var(--text); }
-    .steps a { color: #fca5a5; }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.88rem;
-    }
-
-    th, td {
-      text-align: left;
-      padding: 10px 8px;
-      border-bottom: 1px solid var(--border);
-    }
-
-    th {
-      color: var(--muted);
-      font-size: 0.76rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      font-weight: 600;
-    }
-
-    tr:last-child td { border-bottom: none; }
-
-    .empty {
-      color: var(--muted);
-      font-size: 0.9rem;
-      padding: 16px 0 4px;
-    }
-
-    .meta-foot {
-      margin-top: 10px;
-      font-size: 0.78rem;
-      color: var(--muted);
-    }
-
-    .arch-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-      gap: 12px;
-      margin-top: 8px;
-    }
-
-    .arch-item {
-      background: var(--bg-elev);
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 12px;
-      font-size: 0.84rem;
-      color: var(--muted);
-    }
-
-    .arch-item strong {
-      display: block;
-      color: var(--text);
-      margin-bottom: 4px;
-    }
+    .modal-box h3 { margin: 0 0 8px; font-size: 1.25rem; }
+    .modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 16px; }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
+  <div id="portalShell" class="container">
+    <div class="hero">
       <div class="brand">
-        <div class="emblem">RE2</div>
+        <div class="badge">RE2</div>
         <div>
-          <h1>Red Eclipse 2 — Server &amp; Stats Portal</h1>
-          <div class="subtitle">v2.0.0 Jupiter Edition &middot; Protocol 245 &middot; Native Desktop Client + Live Cloud Portal</div>
+          <h1>Red Eclipse 2 — Play in Browser</h1>
+          <p class="subtitle">Zero-download WebGL2 parkour arena FPS · Impulse wall-runs, 10 RE2 weapons, AI bots &amp; live online rooms</p>
         </div>
       </div>
-      <div class="actions">
-        <button id="refresh-btn" class="btn" type="button">Refresh Status</button>
-        <a class="btn btn-primary" href="https://www.redeclipse.net/download" target="_blank" rel="noopener noreferrer">Download Native Client</a>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <span id="rtStatusBadge" class="pill ok">Browser WebGL2 Ready</span>
+        <span class="pill" style="color:#cbd5e1;">No Download Required</span>
       </div>
-    </header>
+    </div>
 
-    <main class="grid">
-      <section class="card span-7" aria-live="polite">
-        <div class="card-head">
-          <h2 class="card-title">Live Game Server Status</h2>
-          <span id="status-pill" class="pill pill-pending"><span class="dot"></span><span id="status-pill-text">Checking</span></span>
+    <div class="tabs">
+      <button class="tab-btn active" data-tab="play">Play Arena (Browser)</button>
+      <button class="tab-btn" data-tab="leaderboard">Leaderboard &amp; Matches</button>
+      <button class="tab-btn" data-tab="server">Native VPS Server</button>
+    </div>
+
+    <!-- PLAY TAB -->
+    <div data-panel="play">
+      <div class="grid-2">
+        <div class="card">
+          <h2><span>Launch Browser Match</span><span class="pill ok">Instant Play</span></h2>
+          <div class="form-grid">
+            <label class="field">
+              Callsign
+              <input id="playerNameInput" type="text" maxlength="20" value="RiftRunner" placeholder="Your callsign">
+            </label>
+            <label class="field">
+              Arena Map
+              <select id="mapSelect">
+                <option value="rift">Rift Citadel (Public DM Default)</option>
+                <option value="processing">Processing Plant (Reactor Core)</option>
+                <option value="ares">Ares Orbital (Parkour Deck)</option>
+              </select>
+            </label>
+            <label class="field">
+              Game Mode
+              <select id="modeSelect">
+                <option value="dm">Deathmatch (All Weapons)</option>
+                <option value="tdm">Team Deathmatch (Alpha vs Omega)</option>
+                <option value="instagib">Instagib (One-Shot Laser Rifle)</option>
+                <option value="trial">Parkour Impulse Trial</option>
+              </select>
+            </label>
+            <label class="field">
+              AI Bots
+              <select id="botsSelect">
+                <option value="4" selected>4 Bots</option>
+                <option value="6">6 Bots</option>
+                <option value="2">2 Bots</option>
+                <option value="0">0 Bots (Solo / PvP Only)</option>
+              </select>
+            </label>
+            <label class="field">
+              Bot Skill
+              <select id="diffSelect">
+                <option value="casual">Casual</option>
+                <option value="arena" selected>Arena</option>
+                <option value="nightmare">Nightmare</option>
+              </select>
+            </label>
+            <label class="field">
+              Match Limit
+              <select id="fragSelect">
+                <option value="10">10 Frags</option>
+                <option value="15" selected>15 Frags</option>
+                <option value="25">25 Frags</option>
+              </select>
+            </label>
+            <label class="field">
+              Time Limit
+              <select id="timeSelect">
+                <option value="120">2 Minutes</option>
+                <option value="180" selected>3 Minutes</option>
+                <option value="300">5 Minutes</option>
+              </select>
+            </label>
+            <label class="field">
+              Mouse Sensitivity
+              <input id="sensInput" type="range" min="0.0008" max="0.005" step="0.0002" value="0.0022">
+            </label>
+          </div>
+          <button id="playNowBtn" class="btn-play">PLAY NOW IN BROWSER (NO DOWNLOAD)</button>
         </div>
 
-        <div class="kv-grid">
+        <div class="card">
+          <h2><span>Online Room (Supabase Realtime)</span><span class="pill ok">Live Sync</span></h2>
+          <p class="muted" style="margin:0 0 10px;font-size:0.88rem;">
+            Play with friends straight in the browser — create a room code or paste a friend's code, then click <strong>PLAY NOW IN BROWSER</strong>.
+          </p>
+          <div class="room-row">
+            <button id="createRoomBtn" class="btn-sec">Create Online Room</button>
+            <input id="roomCodeInput" type="text" maxlength="8" placeholder="ROOM CODE" style="width:125px;text-transform:uppercase;">
+            <button id="joinRoomBtn" class="btn-sec">Join Code</button>
+          </div>
+          <div id="roomInviteBox" class="room-row" style="display:none;">
+            <span class="pill ok">Room <strong id="roomCodeDisplay"></strong></span>
+            <input id="inviteLinkInput" type="text" readonly style="flex:1;min-width:140px;font-size:0.8rem;">
+            <button id="copyInviteBtn" class="btn-sec">Copy Invite Link</button>
+          </div>
+          <p id="roomStatusMsg" class="muted" style="font-size:0.84rem;margin:10px 0 0;">Solo + AI Bots ready, or create/join an online room above.</p>
+          <div id="roomPeersList" class="peer-list"></div>
+
+          <h2 style="margin-top:18px;font-size:0.98rem;">Parkour &amp; Combat Controls</h2>
+          <div class="controls-grid">
+            <div class="ctrl-item"><span>Move</span><kbd>W A S D</kbd></div>
+            <div class="ctrl-item"><span>Jump / Double / Wall-Kick</span><kbd>Space</kbd></div>
+            <div class="ctrl-item"><span>Impulse Dash</span><kbd>Shift</kbd></div>
+            <div class="ctrl-item"><span>Crouch / Slide</span><kbd>C / Ctrl</kbd></div>
+            <div class="ctrl-item"><span>Primary Fire</span><kbd>LMB / F</kbd></div>
+            <div class="ctrl-item"><span>Secondary / Scope</span><kbd>RMB / E</kbd></div>
+            <div class="ctrl-item"><span>Switch Weapons</span><kbd>1–7 / Wheel</kbd></div>
+            <div class="ctrl-item"><span>Scoreboard / Mute</span><kbd>Tab / M</kbd></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- LEADERBOARD TAB -->
+    <div data-panel="leaderboard" style="display:none;">
+      <div class="grid-2">
+        <div class="card">
+          <h2><span>All-Time Leaderboard</span><span id="lbStatus" class="pill warn">Checking</span></h2>
+          <table>
+            <thead>
+              <tr><th>Rank</th><th>Player</th><th>Kills</th><th>Deaths</th><th>K/D</th><th>Matches</th></tr>
+            </thead>
+            <tbody id="lbBody">
+              <tr><td colspan="6" class="muted">Loading leaderboard...</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card">
+          <h2><span>Recent Matches</span><span class="pill ok">Browser + VPS</span></h2>
+          <table>
+            <thead>
+              <tr><th>Map</th><th>Mode</th><th>Winner</th><th>Duration</th><th>Origin</th></tr>
+            </thead>
+            <tbody id="matchesBody">
+              <tr><td colspan="5" class="muted">Loading recent matches...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- NATIVE SERVER TAB -->
+    <div data-panel="server" style="display:none;">
+      <div class="grid-2">
+        <div class="card">
+          <h2><span>Dedicated Native Server (Optional)</span><span id="srvState" class="pill warn">Checking</span></h2>
           <div class="kv">
-            <div class="kv-label">Server Name</div>
-            <div id="srv-name" class="kv-value">—</div>
+            <span class="k">Map / Mode</span><span id="srvMap">—</span>
+            <span class="k">Players</span><span id="srvPlayers">—</span>
+            <span class="k">Server Address</span><span id="srvAddress">—</span>
           </div>
-          <div class="kv">
-            <div class="kv-label">Players</div>
-            <div id="srv-players" class="kv-value">—</div>
-          </div>
-          <div class="kv">
-            <div class="kv-label">Current Map</div>
-            <div id="srv-map" class="kv-value mono">—</div>
-          </div>
-          <div class="kv">
-            <div class="kv-label">Game Mode</div>
-            <div id="srv-mode" class="kv-value mono">—</div>
-          </div>
+          <a id="joinBtn" class="btn-join" aria-disabled="true">Launch Native Client (redeclipse://)</a>
+          <p class="muted" style="margin-top:12px;font-size:0.86rem;">
+            Note: The upstream C++ engine uses desktop OpenGL (<code>GL_TEXTURE_RECTANGLE</code>), so playing natively on a dedicated VPS server requires an optional desktop binary from <a href="https://redeclipse.net/" target="_blank" rel="noopener">redeclipse.net</a>. For instant zero-download play, use the <strong>Play Arena (Browser)</strong> tab!
+          </p>
         </div>
-
-        <div id="status-notice" class="notice">Querying <span class="mono">/api/status</span>…</div>
-
-        <div id="players-wrap" hidden>
-          <div class="kv-label" style="margin-top:14px;">Connected Players</div>
-          <ul id="players-list" class="players-list"></ul>
+        <div class="card">
+          <h2><span>Native Server Roster</span></h2>
+          <table>
+            <thead><tr><th>#</th><th>Player</th></tr></thead>
+            <tbody id="playersBody">
+              <tr><td colspan="2" class="muted">Checking optional VPS...</td></tr>
+            </tbody>
+          </table>
+          <h2 style="margin-top:16px;"><span>Console Connect</span></h2>
+          <pre>connect &lt;VPS_IP&gt; 28800</pre>
         </div>
-
-        <div class="join-row">
-          <a id="join-btn" class="btn btn-primary btn-disabled" href="#" aria-disabled="true">Join Server</a>
-          <div id="connect-cmd" class="cmd-box">connect &lt;vps-ip&gt; 28801</div>
-          <button id="copy-btn" class="btn" type="button">Copy Connect Cmd</button>
-        </div>
-        <div id="status-meta" class="meta-foot">Auto-refreshes every 15s via <span class="mono">/api/status</span>.</div>
-      </section>
-
-      <section class="card span-5">
-        <div class="card-head">
-          <h2 class="card-title">How to Play &amp; Connect</h2>
-        </div>
-        <ol class="steps">
-          <li><strong>Install the native client:</strong> Red Eclipse 2 uses desktop OpenGL (<span class="mono">GL_TEXTURE_RECTANGLE</span>) and cannot run inside a browser. Download v2.0.0 from <a href="https://www.redeclipse.net/download" target="_blank" rel="noopener noreferrer">redeclipse.net/download</a>.</li>
-          <li><strong>Dedicated UDP server:</strong> Build <span class="mono">redeclipse_server_linux</span> via this repository's GitHub Actions workflow (<span class="mono">build-server.yml</span>) and run it on a VPS with public IPv4 and UDP <span class="mono">28801/28802</span> open.</li>
-          <li><strong>Link live status:</strong> Run <span class="mono">status-agent/agent.js</span> next to the server on the VPS and set <span class="mono">STATUS_AGENT_URL</span> in Vercel Project Settings.</li>
-          <li><strong>Join the match:</strong> Click <strong>Join Server</strong> (<span class="mono">redeclipse://</span>) or open the in-game console (<span class="mono">~</span>) and run the connect command.</li>
-        </ol>
-      </section>
-
-      <section class="card span-7">
-        <div class="card-head">
-          <h2 class="card-title">Player Leaderboard (Supabase)</h2>
-          <span id="lb-badge" class="pill pill-pending"><span class="dot"></span><span id="lb-badge-text">Loading</span></span>
-        </div>
-        <div id="lb-container">
-          <div class="empty">Loading leaderboard from <span class="mono">/api/leaderboard</span>…</div>
-        </div>
-      </section>
-
-      <section class="card span-5">
-        <div class="card-head">
-          <h2 class="card-title">Recent Matches (Supabase)</h2>
-        </div>
-        <div id="matches-container">
-          <div class="empty">Loading recent matches…</div>
-        </div>
-      </section>
-
-      <section class="card span-12">
-        <div class="card-head">
-          <h2 class="card-title">Deployment Split Architecture</h2>
-        </div>
-        <div class="arch-grid">
-          <div class="arch-item">
-            <strong>Vercel (Web + Status API)</strong>
-            Serves this portal plus <span class="mono">/api/status</span> and <span class="mono">/api/leaderboard</span> over HTTPS. Serverless functions cannot hold UDP sockets.
-          </div>
-          <div class="arch-item">
-            <strong>Supabase (Stats + Edge Function)</strong>
-            Stores <span class="mono">players</span>, <span class="mono">matches</span>, <span class="mono">match_players</span>, the <span class="mono">leaderboard</span> view, and the <span class="mono">record-match</span> Edge Function.
-          </div>
-          <div class="arch-item">
-            <strong>GitHub Actions (Server Build CI)</strong>
-            Builds <span class="mono">redeclipse_server_linux</span> from <span class="mono">redeclipse/base@v2.0.0</span> via <span class="mono">make server</span> and publishes the artifact.
-          </div>
-          <div class="arch-item">
-            <strong>VPS (UDP 28801 / 28802 + Agent)</strong>
-            Hosts the live ENet dedicated server and <span class="mono">status-agent/agent.js</span>, bridging raw UDP queries to Vercel over HTTP.
-          </div>
-        </div>
-      </section>
-    </main>
+      </div>
+    </div>
   </div>
 
-  <script>
-    (function () {
-      const statusPill = document.getElementById('status-pill');
-      const statusPillText = document.getElementById('status-pill-text');
-      const srvName = document.getElementById('srv-name');
-      const srvPlayers = document.getElementById('srv-players');
-      const srvMap = document.getElementById('srv-map');
-      const srvMode = document.getElementById('srv-mode');
-      const statusNotice = document.getElementById('status-notice');
-      const playersWrap = document.getElementById('players-wrap');
-      const playersList = document.getElementById('players-list');
-      const joinBtn = document.getElementById('join-btn');
-      const connectCmd = document.getElementById('connect-cmd');
-      const copyBtn = document.getElementById('copy-btn');
-      const statusMeta = document.getElementById('status-meta');
-      const refreshBtn = document.getElementById('refresh-btn');
+  <!-- FULLSCREEN PLAYABLE ARENA -->
+  <div id="arenaOverlay">
+    <canvas id="arenaCanvas"></canvas>
+    <div id="hudDamageFlash"></div>
+    <div id="hudScope"></div>
+    <div id="hudCrosshair"></div>
+    <div id="hudHitmarker"></div>
+    <div id="hudTrick"></div>
 
-      const lbBadge = document.getElementById('lb-badge');
-      const lbBadgeText = document.getElementById('lb-badge-text');
-      const lbContainer = document.getElementById('lb-container');
-      const matchesContainer = document.getElementById('matches-container');
+    <div class="hud-top">
+      <div class="hud-stat"><small>Time</small><strong id="hudClock">3:00</strong></div>
+      <div class="hud-stat"><small>Frags</small><strong id="hudFrags">0 / 15</strong></div>
+    </div>
 
-      let currentCmd = 'connect <vps-ip> 28801';
+    <div id="hudKillfeed"></div>
 
-      function setPill(el, textEl, kind, label) {
-        el.className = 'pill ' + kind;
-        textEl.textContent = label;
-      }
+    <div class="hud-bottom-left">
+      <div class="bar-row">
+        <div class="bar-lbl"><span>HEALTH</span><span id="hudHp">100</span></div>
+        <div class="bar-track"><div id="hudHpFill" class="bar-fill-hp" style="width:100%;"></div></div>
+      </div>
+      <div class="bar-row">
+        <div class="bar-lbl"><span>IMPULSE</span><span id="hudImpulse">100</span></div>
+        <div class="bar-track"><div id="hudImpulseFill" class="bar-fill-imp" style="width:100%;"></div></div>
+      </div>
+    </div>
 
-      function clearChildren(el) {
-        while (el.firstChild) el.removeChild(el.firstChild);
-      }
+    <div id="hudWeaponBar"></div>
 
-      function setNotice(text, color) {
-        statusNotice.style.borderLeftColor = color;
-        statusNotice.textContent = text;
-        statusNotice.hidden = false;
-      }
+    <div class="hud-bottom-right">
+      <div id="hudWeaponName">PISTOL</div>
+      <div id="hudAmmo">12 / 12</div>
+      <div id="hudSpeed">0.0 m/s</div>
+    </div>
 
-      function resetJoin() {
-        joinBtn.setAttribute('href', '#');
-        joinBtn.setAttribute('aria-disabled', 'true');
-        joinBtn.classList.add('btn-disabled');
-        currentCmd = 'connect <vps-ip> 28801';
-        connectCmd.textContent = currentCmd;
-      }
+    <div id="hudRespawn" class="modal-backdrop">
+      <div class="modal-box" style="text-align:center;max-width:320px;">
+        <h3>Eliminated</h3>
+        <p class="muted">Respawning in <strong id="hudRespawnSec">3</strong>s...</p>
+      </div>
+    </div>
 
-      async function loadStatus() {
-        try {
-          const res = await fetch('/api/status', { cache: 'no-store' });
-          const data = await res.json();
+    <div id="hudPauseMenu" class="modal-backdrop">
+      <div class="modal-box">
+        <h3>Arena Paused</h3>
+        <p class="muted">Click <strong>Resume Arena</strong> to lock your mouse pointer and return to combat. Press <strong>Esc</strong> anytime to pause.</p>
+        <div class="modal-actions">
+          <button id="resumeBtn" class="btn-play" style="margin-top:0;flex:1;">Resume Arena</button>
+          <button id="exitArenaBtn" class="btn-sec">Exit to Lobby</button>
+        </div>
+      </div>
+    </div>
 
-          if (res.status === 500 && data && data.error === 'STATUS_AGENT_URL not configured') {
-            setPill(statusPill, statusPillText, 'pill-pending', 'Awaiting VPS');
-            srvName.textContent = 'Not linked';
-            srvPlayers.textContent = '—';
-            srvMap.textContent = '—';
-            srvMode.textContent = '—';
-            playersWrap.hidden = true;
-            resetJoin();
-            setNotice('Vercel + Supabase are live. Set STATUS_AGENT_URL in Vercel Environment Variables once your VPS running redeclipse_server_linux + status-agent is online.', '#f59e0b');
-            statusMeta.textContent = 'Last checked: ' + new Date().toLocaleTimeString();
-            return;
-          }
+    <div id="hudScoreboard" class="modal-backdrop">
+      <div class="modal-box" style="max-width:560px;">
+        <h3>Match Scoreboard</h3>
+        <table>
+          <thead><tr><th>#</th><th>Player</th><th>Kills</th><th>Deaths</th><th>Score</th></tr></thead>
+          <tbody id="hudScoreRows"></tbody>
+        </table>
+      </div>
+    </div>
 
-          if (data && data.online) {
-            setPill(statusPill, statusPillText, 'pill-online', 'Online');
-            srvName.textContent = data.name || 'Red Eclipse 2 Server';
-            const maxp = data.maxplayers != null ? data.maxplayers : '?';
-            srvPlayers.textContent = String(data.players || 0) + ' / ' + String(maxp);
-            srvMap.textContent = data.map || 'unknown';
-            srvMode.textContent = data.mode || 'dm';
-            statusNotice.hidden = true;
+    <div id="endMatchModal" class="modal-backdrop">
+      <div class="modal-box" style="max-width:560px;">
+        <h3>Match Complete</h3>
+        <p id="endWinner" style="font-size:1.1rem;font-weight:800;margin:4px 0 10px;color:#38bdf8;"></p>
+        <span id="endSaveStatus" class="pill warn">Saving stats...</span>
+        <table style="margin-top:12px;">
+          <thead><tr><th>#</th><th>Player</th><th>Kills</th><th>Deaths</th><th>Score</th></tr></thead>
+          <tbody id="endMatchRows"></tbody>
+        </table>
+        <div class="modal-actions">
+          <button id="playAgainBtn" class="btn-play" style="margin-top:0;flex:1;">Play Again</button>
+          <button id="endLobbyBtn" class="btn-sec">Return to Lobby</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
-            const names = Array.isArray(data.player_names) ? data.player_names : [];
-            clearChildren(playersList);
-            if (names.length > 0) {
-              names.forEach(function (name) {
-                const li = document.createElement('li');
-                li.className = 'player-chip';
-                li.textContent = String(name);
-                playersList.appendChild(li);
-              });
-              playersWrap.hidden = false;
-            } else {
-              playersWrap.hidden = true;
-            }
-
-            if (typeof data.join_url === 'string' && data.join_url.indexOf('redeclipse://') === 0) {
-              joinBtn.setAttribute('href', data.join_url);
-              joinBtn.setAttribute('aria-disabled', 'false');
-              joinBtn.classList.remove('btn-disabled');
-              const hostPort = data.address || data.join_url.slice('redeclipse://'.length);
-              const parts = String(hostPort).split(':');
-              currentCmd = 'connect ' + parts[0] + ' ' + (parts[1] || '28801');
-              connectCmd.textContent = currentCmd;
-            } else {
-              resetJoin();
-            }
-
-            statusMeta.textContent = 'Protocol ' + (data.protocol || 245) + ' · Last checked: ' + new Date().toLocaleTimeString();
-          } else {
-            setPill(statusPill, statusPillText, 'pill-offline', 'Offline');
-            srvName.textContent = 'Unreachable';
-            srvPlayers.textContent = '0';
-            srvMap.textContent = '—';
-            srvMode.textContent = '—';
-            playersWrap.hidden = true;
-            resetJoin();
-            setNotice('Server status check failed: ' + ((data && data.error) ? data.error : 'no response'), '#ef4444');
-            statusMeta.textContent = 'Last checked: ' + new Date().toLocaleTimeString();
-          }
-        } catch (err) {
-          setPill(statusPill, statusPillText, 'pill-offline', 'Error');
-          playersWrap.hidden = true;
-          resetJoin();
-          setNotice('Unable to query /api/status: ' + String(err.message || err), '#ef4444');
-        }
-      }
-
-      async function loadLeaderboard() {
-        try {
-          const res = await fetch('/api/leaderboard', { cache: 'no-store' });
-          const data = await res.json();
-
-          if (!data || !data.configured) {
-            setPill(lbBadge, lbBadgeText, 'pill-pending', 'Not Linked');
-            lbContainer.innerHTML = '<div class="empty">Configure SUPABASE_URL and SUPABASE_ANON_KEY in Vercel to display player rankings.</div>';
-            matchesContainer.innerHTML = '<div class="empty">Supabase not configured yet.</div>';
-            return;
-          }
-
-          if (data.error) {
-            setPill(lbBadge, lbBadgeText, 'pill-offline', 'Error');
-            clearChildren(lbContainer);
-            const div = document.createElement('div');
-            div.className = 'empty';
-            div.textContent = 'Supabase query error: ' + data.error;
-            lbContainer.appendChild(div);
-            return;
-          }
-
-          setPill(lbBadge, lbBadgeText, 'pill-online', 'Connected');
-
-          const rows = Array.isArray(data.leaderboard) ? data.leaderboard : [];
-          clearChildren(lbContainer);
-          if (rows.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'empty';
-            empty.textContent = 'No matches recorded yet. Complete a match on the VPS server and post results via the record-match Edge Function to populate rankings.';
-            lbContainer.appendChild(empty);
-          } else {
-            const table = document.createElement('table');
-            const thead = document.createElement('thead');
-            thead.innerHTML = '<tr><th>#</th><th>Player</th><th>Score</th><th>K / D</th><th>K/D</th><th>Games</th></tr>';
-            table.appendChild(thead);
-            const tbody = document.createElement('tbody');
-            rows.forEach(function (row, idx) {
-              const tr = document.createElement('tr');
-              const cells = [
-                String(idx + 1),
-                String(row.name || 'unnamed'),
-                String(row.total_score || 0),
-                String(row.total_kills || 0) + ' / ' + String(row.total_deaths || 0),
-                String(row.kd != null ? row.kd : '0'),
-                String(row.total_games || 0),
-              ];
-              cells.forEach(function (val) {
-                const td = document.createElement('td');
-                td.textContent = val;
-                tr.appendChild(td);
-              });
-              tbody.appendChild(tr);
-            });
-            table.appendChild(tbody);
-            lbContainer.appendChild(table);
-          }
-
-          const matches = Array.isArray(data.recentMatches) ? data.recentMatches : [];
-          clearChildren(matchesContainer);
-          if (matches.length === 0) {
-            const emptyM = document.createElement('div');
-            emptyM.className = 'empty';
-            emptyM.textContent = 'No completed matches in Supabase yet.';
-            matchesContainer.appendChild(emptyM);
-          } else {
-            const mTable = document.createElement('table');
-            const mHead = document.createElement('thead');
-            mHead.innerHTML = '<tr><th>Map</th><th>Mode</th><th>Winner</th><th>Duration</th></tr>';
-            mTable.appendChild(mHead);
-            const mBody = document.createElement('tbody');
-            matches.forEach(function (m) {
-              const tr = document.createElement('tr');
-              const mins = Math.floor(Number(m.duration_s || 0) / 60);
-              const secs = Number(m.duration_s || 0) % 60;
-              const dur = mins + 'm ' + secs + 's';
-              [String(m.map || '—'), String(m.mode || '—'), String(m.winner || '—'), dur].forEach(function (val) {
-                const td = document.createElement('td');
-                td.textContent = val;
-                tr.appendChild(td);
-              });
-              mBody.appendChild(tr);
-            });
-            mTable.appendChild(mBody);
-            matchesContainer.appendChild(mTable);
-          }
-        } catch (err) {
-          setPill(lbBadge, lbBadgeText, 'pill-offline', 'Error');
-          clearChildren(lbContainer);
-          const errDiv = document.createElement('div');
-          errDiv.className = 'empty';
-          errDiv.textContent = 'Unable to load /api/leaderboard: ' + String(err.message || err);
-          lbContainer.appendChild(errDiv);
-        }
-      }
-
-      copyBtn.addEventListener('click', function () {
-        if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(currentCmd).then(function () {
-            copyBtn.textContent = 'Copied';
-            setTimeout(function () { copyBtn.textContent = 'Copy Connect Cmd'; }, 1500);
-          }).catch(function () {});
-        }
-      });
-
-      refreshBtn.addEventListener('click', function () {
-        loadStatus();
-        loadLeaderboard();
-      });
-
-      loadStatus();
-      loadLeaderboard();
-      setInterval(loadStatus, 15000);
-      setInterval(loadLeaderboard, 30000);
-    })();
-  </script>
+  <script src="/game.bundle.js" defer></script>
 </body>
 </html>

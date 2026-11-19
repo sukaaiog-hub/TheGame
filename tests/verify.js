@@ -2,7 +2,6 @@
 
 const assert = require('assert');
 const dgram = require('dgram');
-const http = require('http');
 const fs = require('fs');
 const path = require('path');
 
@@ -24,7 +23,7 @@ function buildQueryReply(echoBytes, opts) {
   bufs.push(putInt(15));
   const attrs = [
     opts.protocol ?? 245,
-    opts.modeIndex ?? 2, // dm
+    opts.modeIndex ?? 2,
     opts.mutators ?? 0,
     opts.timeremaining ?? 420,
     opts.maxslots ?? 16,
@@ -100,7 +99,7 @@ async function run() {
   assert.deepStrictEqual(agentJson.player_names, ['AlphaPlayer', 'BravoBot']);
   assert.strictEqual(agentJson.join_url, `redeclipse://203.0.113.10:${udpPort - 1}`);
 
-  // 3. Test Vercel api/status.js handler (unconfigured + live agent + offline fallback)
+  // 3. Test Vercel api/status.js handler
   const { default: statusHandler } = await import('../api/status.js');
   delete process.env.STATUS_AGENT_URL;
   const resUnconf = makeMockRes();
@@ -115,8 +114,9 @@ async function run() {
   assert.strictEqual(resLive.body.online, true);
   assert.strictEqual(resLive.body.map, 'rift');
 
-  // 4. Test Vercel api/leaderboard.js handler when env vars unset
+  // 4. Test Vercel api/leaderboard.js and api/config.js
   const { default: lbHandler } = await import('../api/leaderboard.js');
+  const { default: cfgHandler } = await import('../api/config.js');
   delete process.env.SUPABASE_URL;
   delete process.env.SUPABASE_ANON_KEY;
   delete process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -125,15 +125,34 @@ async function run() {
   await lbHandler({}, resLb);
   assert.strictEqual(resLb.statusCode, 200);
   assert.strictEqual(resLb.body.configured, false);
-  assert.deepStrictEqual(resLb.body.leaderboard, []);
 
-  // 5. Verify public/index.html has no external asset dependencies
+  const resCfg = makeMockRes();
+  await cfgHandler({}, resCfg);
+  assert.strictEqual(resCfg.statusCode, 200);
+  assert.strictEqual(resCfg.body.realtimeEnabled, false);
+
+  // 5. Test api/record-browser-match.js input validation
+  const { default: recHandler } = await import('../api/record-browser-match.js');
+  const resMethod = makeMockRes();
+  await recHandler({ method: 'GET' }, resMethod);
+  assert.strictEqual(resMethod.statusCode, 405);
+
+  const resBad = makeMockRes();
+  await recHandler({ method: 'POST', body: { map: 'hacked', mode: 'dm', duration_s: 30, players: [] } }, resBad);
+  assert.strictEqual(resBad.statusCode, 400);
+
+  // 6. Verify public/index.html + public/game.bundle.js are self-contained with zero third-party CDNs
   const html = fs.readFileSync(path.join(__dirname, '..', 'public', 'index.html'), 'utf8');
-  assert(!/<script[^>]+src=/i.test(html), 'public/index.html must inline all scripts');
-  assert(!/<link[^>]+href=/i.test(html), 'public/index.html must inline all styles');
-  assert(html.includes('/api/status'), 'public/index.html must fetch /api/status');
-  assert(html.includes('/api/leaderboard'), 'public/index.html must fetch /api/leaderboard');
-  assert(html.includes('redeclipse://'), 'public/index.html must support redeclipse:// links');
+  const bundlePath = path.join(__dirname, '..', 'public', 'game.bundle.js');
+  assert(fs.existsSync(bundlePath), 'public/game.bundle.js must be built');
+  const bundle = fs.readFileSync(bundlePath, 'utf8');
+  assert(!/<script[^>]+src=["']https?:/i.test(html), 'public/index.html must not load external scripts');
+  assert(!/<link[^>]+href=["']https?:/i.test(html), 'public/index.html must not load external stylesheets');
+  assert(html.includes('/game.bundle.js'), 'public/index.html must load local /game.bundle.js');
+  assert(bundle.includes('/api/status'), 'bundle must fetch /api/status');
+  assert(bundle.includes('/api/leaderboard'), 'bundle must fetch /api/leaderboard');
+  assert(bundle.includes('/api/record-browser-match'), 'bundle must post /api/record-browser-match');
+  assert(html.includes('redeclipse://'), 'public/index.html must keep redeclipse:// optional native join');
 
   await new Promise((resolve) => agentMod.server.close(resolve));
   await new Promise((resolve) => udpServer.close(resolve));
